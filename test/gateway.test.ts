@@ -246,6 +246,27 @@ test("routes Chat and each business namespace without changing the Web BFF paths
   })
 })
 
+test("forwards Hub Idempotency-Key with its canonical lowercase header name", async () => {
+  await withUpstream(async ({ method, headers }) => {
+    assert.equal(method, "POST")
+    assert.equal(headers["idempotency-key"], "hub-idempotency-fixture")
+  }, async (url) => {
+    const app = buildApp({ ...baseConfig, hubBaseUrl: url })
+    const response = await app.inject({
+      method: "POST",
+      url: "/hub/self/scheduled",
+      headers: {
+        "x-kokoro-service": "web-bff",
+        "x-kokoro-internal-secret": "web-bff-secret",
+        "Idempotency-Key": "hub-idempotency-fixture",
+      },
+      payload: JSON.stringify({ enabled: true }),
+    })
+    assert.equal(response.statusCode, 200)
+    await app.close()
+  })
+})
+
 test("accepts only the Web BFF service credential, not the browser bearer", async () => {
   const app = buildApp({ ...baseConfig, sessionBaseUrl: "http://session.invalid" })
   const browserBearer = await app.inject({
@@ -287,6 +308,7 @@ async function withUpstream(
         "x-forwarded-for": header(request.headers["x-forwarded-for"]),
         "x-domain": header(request.headers["x-domain"]),
         "x-kokoro-request-id": header(request.headers["x-kokoro-request-id"]),
+        "idempotency-key": header(request.headers["idempotency-key"]),
       },
       body: Buffer.concat(chunks),
     })

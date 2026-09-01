@@ -67,6 +67,7 @@ const REQUEST_HEADERS = new Set([
   "authorization",
   "cache-control",
   "content-type",
+  "idempotency-key",
   "if-match",
   "if-none-match",
   "if-modified-since",
