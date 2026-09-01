@@ -40,9 +40,24 @@ Forwarded: host=<KOKORO_DOMAIN>
 
 `Authorization`、`Last-Event-ID`、`x-kokoro-request-id` 和 Web BFF 派生的 principal 头按
 **路由所属 bounded context 的 allowlist** 转发：Hub 允许 `x-kokoro-namespace` 与
-`x-kokoro-user-id`，User 面允许 User principal 头；Session、System、Agent、Payment 和
-Billing 面默认不接收这些 principal 头。`Cookie`、`X-Domain`、`Host`、`X-Forwarded-*`、
-service credential 和旧的 tenant/site header 不转发。Gateway 不信任浏览器自己提供的部署域名。
+`x-kokoro-user-id`，User `/bff/*` 只允许 `x-user-id`，System 只允许
+`x-kokoro-actor-id`，Agent `/connections/*` 允许 `x-kokoro-namespace` 与
+`x-kokoro-user-id`；User `/auth/*`、Session、Payment 和 Billing 面不接收 principal 头。
+`Cookie`、`X-Domain`、`Host`、`X-Forwarded-*`、service credential 和旧的 tenant/site header
+不转发。Gateway 不信任浏览器自己提供的部署域名。
+
+Principal allowlist is route-scoped and intentionally explicit:
+
+| Gateway route | Principal headers forwarded upstream |
+| --- | --- |
+| `/hub/*` | `x-kokoro-namespace`, `x-kokoro-user-id` |
+| `/bff/*` | `x-user-id` |
+| `/system/*` | `x-kokoro-actor-id` |
+| `/connections/*` | `x-kokoro-namespace`, `x-kokoro-user-id` |
+| `/auth/*`, `/sessions/*`, `/models/*`, `/agents/*`, `/artifacts/*`, `/billing/*`, `/shared/*`, `/payment/*`, `/billing-service/*` | none |
+
+The Web BFF derives these headers from its server-side session envelope before calling the gateway;
+the gateway does not derive identity from a browser query, body, or deployment-context header.
 
 这一区分是刻意的：`x-kokoro-namespace` 只表示 Hub 的业务 workspace scope，不是 GA
 RuntimeNamespace，也不是浏览器可选择的身份轴。Chat 的 `/sessions/*` 仅接收 Session
@@ -77,6 +92,12 @@ Gateway 不重写 Chat 的资源名或 JSON；下表只固定当前 Web BFF 允�
 For every listed path, the gateway preserves upstream HTTP status and response body. Network failure
 or timeout is mapped only at this transport boundary to the namespace-specific `502` error; upstream
 `401/403/409/422/5xx` is not normalized into a generic success or fixture response.
+
+For streamed files and deliveries, the gateway asks the upstream for identity encoding. This avoids
+Node fetch transparently decoding a compressed upstream body while leaving its compressed
+`content-length` attached to the decoded stream. `content-type`, `content-length`,
+`content-disposition`, `cache-control` and other end-to-end response headers are passed through;
+`content-encoding` and hop-by-hop headers are not synthesized on the decoded stream.
 
 ## 3. 路由表
 

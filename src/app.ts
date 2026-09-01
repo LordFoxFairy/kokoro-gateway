@@ -31,8 +31,8 @@ type RouteDefinition = {
   secret: SecretKey
   /** Remove the gateway namespace before forwarding, e.g. `/payment/billing/plans`. */
   stripPrefix?: boolean
-  /** Principal headers are opt-in per bounded context, never global. */
-  principalHeaders?: readonly string[]
+  /** Principal headers are explicit per bounded context, never global. */
+  principalHeaders: readonly string[]
   unavailableError: string
   unreachableError: string
 }
@@ -44,19 +44,19 @@ type RouteDefinition = {
 // Session-owned; storefront/billing services use explicit `/payment` and
 // `/billing-service` namespaces to avoid an ambiguous route.
 const ROUTES: readonly RouteDefinition[] = [
-  { prefix: "/sessions", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
-  { prefix: "/models", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
-  { prefix: "/agents", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
-  { prefix: "/artifacts", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
-  { prefix: "/billing", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
-  { prefix: "/shared", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
-  { prefix: "/hub", upstream: "hubBaseUrl", secret: "hubInternalSecret", principalHeaders: ["x-kokoro-namespace", "x-kokoro-user-id", "x-kokoro-actor-id", "x-user-id"], unavailableError: "hub_not_configured", unreachableError: "hub_unreachable" },
-  { prefix: "/auth", upstream: "userBaseUrl", secret: "userInternalSecret", principalHeaders: ["x-kokoro-user-id", "x-kokoro-actor-id", "x-user-id"], unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
-  { prefix: "/bff", upstream: "userBaseUrl", secret: "userInternalSecret", principalHeaders: ["x-kokoro-user-id", "x-kokoro-actor-id", "x-user-id"], unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
-  { prefix: "/system", upstream: "systemBaseUrl", secret: "systemInternalSecret", unavailableError: "system_not_configured", unreachableError: "system_unreachable" },
+  { prefix: "/sessions", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", principalHeaders: [], unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/models", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", principalHeaders: [], unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/agents", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", principalHeaders: [], unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/artifacts", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", principalHeaders: [], unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/billing", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", principalHeaders: [], unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/shared", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", principalHeaders: [], unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/hub", upstream: "hubBaseUrl", secret: "hubInternalSecret", principalHeaders: ["x-kokoro-namespace", "x-kokoro-user-id"], unavailableError: "hub_not_configured", unreachableError: "hub_unreachable" },
+  { prefix: "/auth", upstream: "userBaseUrl", secret: "userInternalSecret", principalHeaders: [], unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
+  { prefix: "/bff", upstream: "userBaseUrl", secret: "userInternalSecret", principalHeaders: ["x-user-id"], unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
+  { prefix: "/system", upstream: "systemBaseUrl", secret: "systemInternalSecret", principalHeaders: ["x-kokoro-actor-id"], unavailableError: "system_not_configured", unreachableError: "system_unreachable" },
   { prefix: "/connections", upstream: "agentBaseUrl", secret: "agentInternalSecret", principalHeaders: ["x-kokoro-namespace", "x-kokoro-user-id"], unavailableError: "agent_not_configured", unreachableError: "agent_unreachable" },
-  { prefix: "/payment", upstream: "paymentBaseUrl", secret: "paymentInternalSecret", stripPrefix: true, unavailableError: "payment_not_configured", unreachableError: "payment_unreachable" },
-  { prefix: "/billing-service", upstream: "billingBaseUrl", secret: "billingInternalSecret", stripPrefix: true, unavailableError: "billing_not_configured", unreachableError: "billing_unreachable" },
+  { prefix: "/payment", upstream: "paymentBaseUrl", secret: "paymentInternalSecret", principalHeaders: [], stripPrefix: true, unavailableError: "payment_not_configured", unreachableError: "payment_unreachable" },
+  { prefix: "/billing-service", upstream: "billingBaseUrl", secret: "billingInternalSecret", principalHeaders: [], stripPrefix: true, unavailableError: "billing_not_configured", unreachableError: "billing_unreachable" },
 ]
 
 // Only these caller headers are part of the common public transport.
@@ -64,7 +64,6 @@ const ROUTES: readonly RouteDefinition[] = [
 // reconstructed or explicitly allowed by the route below.
 const REQUEST_HEADERS = new Set([
   "accept",
-  "accept-encoding",
   "authorization",
   "cache-control",
   "content-type",
@@ -179,6 +178,10 @@ function forwardedRequestHeaders(
   const headers: Record<string, string> = {
     "x-kokoro-service": config.sessionServiceValue || GATEWAY_SERVICE,
     forwarded: `host=${config.domain}`,
+    // Node fetch transparently decodes compressed upstream bodies. Requesting
+    // identity keeps an upstream content-length aligned with the stream that
+    // Fastify sends to the Web BFF.
+    "accept-encoding": "identity",
   }
   const internalSecret = config[route.secret]
   if (internalSecret !== undefined) {
@@ -186,7 +189,7 @@ function forwardedRequestHeaders(
   }
   for (const [name, value] of Object.entries(request.headers)) {
     const lowerName = name.toLowerCase()
-    if (!REQUEST_HEADERS.has(lowerName) && !(route.principalHeaders ?? []).includes(lowerName)) continue
+    if (!REQUEST_HEADERS.has(lowerName) && !route.principalHeaders.includes(lowerName)) continue
     if (typeof value === "string") headers[lowerName] = value
     else if (Array.isArray(value)) headers[lowerName] = value.join(", ")
   }

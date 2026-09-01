@@ -60,6 +60,13 @@ to the Web-compatible `502 {"error":"session_unreachable"}`. Business
 idempotency, audit and cross-service authorization are later gateway capabilities; they must not be
 implemented twice while Session remains the authority.
 
+The gateway sends `Accept-Encoding: identity` to its upstreams before streaming a response. Node fetch
+otherwise transparently decodes compressed bodies while retaining the upstream compressed
+`content-length`, which would make an artifact response's framing disagree with its body. The gateway
+passes through `content-type`, `content-length`, `content-disposition`, `cache-control` and other
+end-to-end headers, while omitting `content-encoding`, cookies, and hop-by-hop headers from the
+decoded response.
+
 ## Shared contract policy
 
 Root `contract/` is the single source of cross-repository Proto/OpenAPI authority. This repository

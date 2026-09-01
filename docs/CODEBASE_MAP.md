@@ -31,10 +31,11 @@ upstream. `Host`, `X-Domain`, `X-Forwarded-*`, cookies, service credentials,
 and legacy tenant/site headers are not caller-controlled transport context.
 
 Common transport headers are allowlisted in `src/app.ts`. Principal headers
-are opt-in per bounded context: Hub and Agent routes can carry the declared
-workspace/user scope; Session-compatible Chat routes do not accept principal
-headers. The gateway does not own browser UI, session envelopes, Session
-facts, fixture data, or runtime namespace authority.
+are explicit per route: Hub and `/connections/*` carry workspace/user scope,
+`/bff/*` carries the User `x-user-id`, and `/system/*` carries the optional
+actor id. Session-compatible Chat, `/auth/*`, Payment, and Billing routes do
+not accept principal headers. The gateway does not own browser UI, session
+envelopes, Session facts, fixture data, or runtime namespace authority.
 
 ## Route ownership
 
