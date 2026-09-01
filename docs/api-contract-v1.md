@@ -10,17 +10,24 @@ Chat 不新增 `/chat/*` 路由。浏览器只访问 Web 同源路径：
 
 ```text
 Composer / SessionEngine
-  → kokoro-app /api/session/*
-  → kokoro-gateway /sessions/*
+  → kokoro-app /api/session/* BFF + Chat adapter
+  → (optional) kokoro-gateway /sessions/*
   → kokoro-session
 ```
 
 Direct Chat 和 Project Chat 都使用这一条链路；项目上下文通过 Session contract 中的
 `project_ref`/scope 表达，不通过 Gateway 路由分叉。
 
-Gateway 是独立部署进程，不是 Web workspace package，不包含页面、React 状态、Composer、
-胶囊、侧栏或 fixture 数据。Web 仍拥有 HttpOnly session envelope、浏览器 Origin 检查和
-同源 BFF；Gateway 只接受可信 Web BFF 的服务调用。
+`kokoro-app` 的 BFF/Chat adapter 是浏览器契约的所有者：它负责同源路径、HttpOnly session
+envelope、Origin 检查、浏览器错误投影和 Chat 请求适配。Gateway 是独立部署进程，不是 Web
+workspace package，不包含页面、React 状态、Composer、胶囊、侧栏或 fixture 数据；它只接受
+可信 Web BFF 的调用，按配置作为可选传输 hop。当前实现不定义 Business-to-Gateway 的调用
+身份；未来若业务服务也需要经过 Gateway，必须另行增加版本化的 service-auth 契约。
+
+跨领域业务编排属于未来独立的 `kokoro-business` 服务，不属于本 Gateway。本文件只定义
+Gateway 的 HTTP transport、header、streaming 和 namespace 语义；Business 的业务规则、
+聚合 DTO、幂等和审计契约应在其独立子仓库维护。当前已存在的 `/hub/*` 等 namespace 仍按
+下文路由表提供兼容透传，不代表 Gateway 拥有这些业务能力。
 
 ## 2. 入站认证与上下文
 
@@ -127,9 +134,9 @@ Node fetch transparently decoding a compressed upstream body while leaving its c
 `/billing/*` 故意保留给 Session。Payment 和独立 Billing 必须使用显式 namespace，防止同一个
 `/billing/plans` 在 Session compatibility 与 storefront 之间发生歧义。
 
-## 4. Web 配置方式
+## 4. Web 配置方式（可选 Gateway hop）
 
-浏览器配置不变，仍使用：
+浏览器配置不变。部署选择 Gateway hop 时，Web BFF 使用以下 server-only 配置：
 
 ```dotenv
 NEXT_PUBLIC_SESSION_PREVIEW=0
@@ -138,12 +145,13 @@ KOKORO_INTERNAL_SECRET_WEB_BFF=<shared-with-gateway>
 KOKORO_WEB_SESSION_SECRET=<web-session-envelope-secret>
 ```
 
-配置统一 Gateway 基址后，Web BFF 会按路由自动使用 `/sessions`、`/hub`、`/system`、
-`/connections`、`/payment` 和 `/billing-service` namespace。`KOKORO_*_BASE_URL` 显式值
-仍可覆盖单个 bounded context；浏览器路径和客户端契约保持不变。
+配置 Gateway 基址后，Web BFF 可按路由使用 `/sessions`、`/hub`、`/system`、`/connections`、
+`/payment` 和 `/billing-service` namespace。`KOKORO_*_BASE_URL` 显式值仍可让单个 bounded
+context 直连或覆盖 Gateway；浏览器路径和客户端契约保持不变。Chat 在没有 Gateway hop 的
+部署中直接使用 `KOKORO_SESSION_BASE_URL` 连接 `kokoro-session`，不新增浏览器 API。
 
-若把其它 Web BFF 也迁移到同一个 Gateway，Web 侧使用以下 server-only 地址；支付和独立
-Billing 使用 namespace 前缀：
+若把其它 Web BFF 也迁移到同一个 Gateway，Web 侧可使用以下 server-only 地址；支付和独立
+Billing 使用 namespace 前缀。此配置只选择传输入口，不把 Gateway 变成业务编排服务：
 
 ```dotenv
 KOKORO_USER_BASE_URL=http://kokoro-gateway:8080
@@ -170,7 +178,7 @@ KOKORO_GATEWAY_BODY_LIMIT_BYTES=10485760
 
 ## 5. Chat 迁移验收
 
-迁移 Web 的 `KOKORO_SESSION_BASE_URL` 前，使用合成 Session upstream 验证：
+启用 Gateway hop 或迁移 Web 的 `KOKORO_SESSION_BASE_URL` 前，使用合成 Session upstream 验证：
 
 1. `POST /sessions/{id}/messages` 的 JSON body 与 receipt 不变，重复幂等键不重复创建 Run。
 2. `GET /sessions/{id}/events` 保持 `text/event-stream`、`Last-Event-ID` 和增量 event。
@@ -181,3 +189,30 @@ KOKORO_GATEWAY_BODY_LIMIT_BYTES=10485760
 
 Preview fixture 只能验证 Web UI，不代表 Gateway 或真实 Session 已联调。生产启用前必须
 完成真实 upstream、ACL、secret、SSE、HITL、artifact 和回滚验收。
+
+## 6. Project Chat scope transport gate（v223）
+
+Gateway 对 Project Chat 只做传输保真，不解释或授权 `project_ref`：
+
+```text
+GET  /sessions?scope=project&project_ref=PROJECT_REF&cursor=CURSOR
+  → upstream 同路径与 query
+
+POST /sessions/SESSION_ID/messages
+     { ..., "project_ref": "PROJECT_REF" }
+  → upstream 同 JSON 字段
+```
+
+`PROJECT_REF` 是不透明项目引用；Gateway 不把它转换成 namespace、tenant、域名或路由前缀，也不把
+Direct/Project scope 合并。项目归属的首次绑定、后续 mismatch、权限检查、持久化和 Direct/Project
+列表过滤由 `kokoro-session` 的 canonical Chat contract 负责。
+
+在 Session 完成以下能力并通过其自身 contract tests 之前，Gateway 只能宣称“project_ref 已透传”，
+不能宣称 Project Chat 的 Live 业务闭环：
+
+1. 消息 schema 接收 `project_ref`，且后续消息必须匹配首条消息绑定的项目引用；
+2. Session 元数据/存储保留项目归属，但 snapshot、SSE、control 不额外泄露该字段；
+3. `GET /sessions?scope=direct` 只返回无项目归属会话，`scope=project&project_ref=...` 只返回精确匹配；
+4. Memory/Mongo、分页 cursor、越权和 mismatch 错误均有独立回归测试。
+
+本节是 Gateway 的跨仓库发布门槛说明，不向 `kokoro-app` 引入 `kokoro-session` 源码或 `site` 子目录。

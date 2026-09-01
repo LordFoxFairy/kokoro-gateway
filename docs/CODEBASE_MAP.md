@@ -20,15 +20,17 @@ file dependency, submodule, or source import of the Web repository.
 
 ```text
 kokoro-app same-origin /api/* BFF
-  → kokoro-gateway server-only namespace
-  → Session / Hub / User / System / Agent / Payment / Billing upstream
+  ├─ Chat adapter → (optional) kokoro-gateway /sessions/* → kokoro-session
+  └─ business adapter → future kokoro-business → domain services
 ```
 
 The gateway accepts only the Web BFF service credential pair:
 `x-kokoro-service: web-bff` and `x-kokoro-internal-secret`. It reconstructs
 `x-kokoro-service` and `Forwarded: host=<KOKORO_DOMAIN>` for the selected
 upstream. `Host`, `X-Domain`, `X-Forwarded-*`, cookies, service credentials,
-and legacy tenant/site headers are not caller-controlled transport context.
+and legacy tenant/site headers are not caller-controlled transport context. `kokoro-app` owns the
+browser same-origin BFF and Chat adapter; a future independent `kokoro-business` service owns
+cross-domain business orchestration. This repository is only an optional transport/ingress adapter.
 
 Common transport headers are allowlisted in `src/app.ts`. Principal headers
 are explicit per route: Hub and `/connections/*` carry workspace/user scope,
@@ -48,7 +50,7 @@ envelopes, Session facts, fixture data, or runtime namespace authority.
 | `/connections` | Agent | Agent connection setup |
 | `/payment`, `/billing-service` | Payment/Billing | Explicitly namespaced service surfaces; gateway prefix is stripped upstream |
 
-`docs/business-gateway-contract-v1.md` defines the repository-level business entry boundary;
-`docs/api-contract-v1.md` defines the transport contract. Root `contract/`
-remains the cross-repository schema authority; this repository does not copy
-Root Proto/OpenAPI or create a second business DTO source.
+`docs/business-gateway-contract-v1.md` defines the repository boundary between `kokoro-app`, the
+future `kokoro-business` service and this transport adapter; `docs/api-contract-v1.md` defines the
+HTTP transport contract. Root `contract/` remains the cross-repository schema authority; this
+repository does not copy Root Proto/OpenAPI or create a second business DTO source.

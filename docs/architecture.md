@@ -4,23 +4,39 @@
 
 `kokoro-gateway` is a separate deployable repository. It must not be added as a `file:` dependency,
 git submodule, or workspace member of `kokoro-app`. The Web repository owns its pages, Composer,
-capsules, same-origin BFF, HttpOnly session envelope and Origin checks. This repository currently
-owns the Session-compatible transport boundary and service-to-service adapter; business orchestration,
-idempotency storage and audit authority remain future gateway capabilities until explicitly transferred.
+capsules, same-origin BFF, Chat adapter, HttpOnly session envelope and Origin checks. This repository
+is only an optional transport/ingress adapter. A future independent `kokoro-business` service owns
+cross-domain business orchestration, business rules, aggregate DTOs, idempotency storage and audit
+authority; those responsibilities must not be moved into this gateway by implication.
 
 The first migration keeps the browser contract stable:
 
 ```text
 kokoro-app /api/session/*
-  → kokoro-app server BFF
-  → kokoro-gateway Session-compatible /sessions/*
+  → kokoro-app same-origin BFF + Chat adapter
+  → (optional) kokoro-gateway Session-compatible /sessions/*
   → kokoro-session
 ```
 
 Chat is intentionally not exposed as a second `/chat/*` API. The Web Composer and SessionEngine
-continue to call `/api/session/sessions/{session_id}/messages`; the Web BFF maps that request to
-`/sessions/{session_id}/messages` on this gateway. Project Chat uses the same path and only changes
-the session scope/project reference.
+continue to call `/api/session/sessions/{session_id}/messages`; the Web BFF/Chat adapter either maps
+that request directly to Session or maps it to `/sessions/{session_id}/messages` on this gateway when
+the optional transport hop is enabled. Project Chat uses the same path and only changes the session
+scope/project reference.
+
+For business surfaces, the intended ownership is separate from this Chat transport path:
+
+```text
+kokoro-app same-origin /api/* BFF
+  → kokoro-business (future business orchestration service)
+  → domain services
+```
+
+The exact business service API is not implemented or defined in this repository. The routes currently
+available in this gateway remain compatibility namespaces for server-only upstream calls; they do not
+turn the gateway into the business layer. The current gateway authentication contract accepts the
+`kokoro-app` Web BFF service identity; a future Business-to-Gateway hop would require its own explicit
+versioned service-auth contract and is outside this repository's current implementation.
 
 The browser never knows the gateway URL and never sends `X-Domain`, `Forwarded`, service credentials,
 internal tenant ids, runtime tokens or gateway selectors.
@@ -34,7 +50,7 @@ The gateway emits `x-kokoro-service: kokoro-gateway`, an optional
 `x-kokoro-internal-secret` from `KOKORO_SESSION_INTERNAL_SECRET`, and exactly one server-generated
 `Forwarded: host=<KOKORO_DOMAIN>`. HTTP `Host` is left to the upstream URL authority.
 
-## Phase 1 contract
+## Phase 1 transport contract
 
 The compatible upstream covers the existing Web session paths:
 
@@ -53,12 +69,13 @@ Session-owned so the existing Chat billing reads cannot collide with a separate 
 The optional upstreams can be enabled independently; a missing one returns a typed 503 instead of
 silently falling back to a fixture or another service.
 
-The gateway initially forwards these requests without owning Session facts. It must preserve status,
+The gateway forwards these requests without owning Session facts. It must preserve status,
 content type, SSE cache headers, opaque ids, request id, binary response headers (`content-length`
 and `content-disposition`) and user-visible error semantics. Network failure and timeout are mapped
-to the Web-compatible `502 {"error":"session_unreachable"}`. Business
-idempotency, audit and cross-service authorization are later gateway capabilities; they must not be
-implemented twice while Session remains the authority.
+to the Web-compatible `502 {"error":"session_unreachable"}`. Business idempotency, audit and
+cross-service business authorization belong to the relevant business or domain service. The gateway
+only transports the already-authenticated server-to-server request and must not implement a second
+business authority while Session remains the Chat authority.
 
 The gateway sends `Accept-Encoding: identity` to its upstreams before streaming a response. Node fetch
 otherwise transparently decodes compressed bodies while retaining the upstream compressed
@@ -79,13 +96,16 @@ queues and adapters remain server-only here.
 
 1. Add `kokoro-gateway` to the Root contract consumer manifest and generate its declared closure.
 2. Run the gateway in compatibility mode against a synthetic Session fixture.
-3. Point non-production `kokoro-app` `KOKORO_GATEWAY_BASE_URL` to the gateway; keep its browser
-   paths at `/api/*`. The Web BFF resolves the matching Gateway namespace automatically.
-4. Use explicit `KOKORO_*_BASE_URL` overrides only when a bounded context is being migrated
-   separately; otherwise the single Gateway base covers `/sessions`, `/hub`, `/auth` + `/bff`,
-   `/system`, `/connections`, `/payment`, and `/billing-service`.
-5. Verify duplicate-submit idempotency, SSE reconnect, HITL cancel/resume, 401/403/409/5xx,
+3. If the optional hop is selected, point non-production `kokoro-app` `KOKORO_GATEWAY_BASE_URL`
+   to the gateway; keep browser paths at `/api/*`. The Web BFF resolves the matching transport
+   namespace without exposing the gateway URL to the browser. Chat may instead use a direct
+   `kokoro-session` URL during migration.
+4. Use explicit `KOKORO_*_BASE_URL` overrides when a bounded context is connected directly or
+   migrated separately. A single Gateway base can cover the current transport namespaces, but it is
+   not a requirement and does not replace `kokoro-business`.
+5. Verify duplicate-submit behavior at the owning business/Session service, then verify SSE reconnect,
+   HITL cancel/resume, 401/403/409/5xx,
    artifact streaming and exact `Forwarded` reconstruction for Chat first, then verify each
    optional namespace independently.
-6. Only then enable gateway-owned orchestration; keep Session as lifecycle/projection owner until
-   the authority transfer is explicitly versioned.
+6. Only then enable the selected business service path. This gateway remains a transport adapter;
+   keep Session as lifecycle/projection owner until any authority transfer is explicitly versioned.

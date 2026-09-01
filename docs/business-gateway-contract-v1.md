@@ -1,38 +1,62 @@
-# Kokoro 统一业务 / Gateway 子仓库契约 v1
+# Kokoro Business / Gateway 子仓库边界契约 v1
 
-状态：实施基线（2026-08-31）。本文件回答一个明确的仓库边界问题：
-`kokoro-app` 需要一个统一的服务端业务接入入口，但这个入口不应把所有领域服务的数据和代码
-合并到 Web，也不应复制一套平行 DTO。
+状态：架构基线（2026-09-01）。本文件回答一个明确的仓库边界问题：
+`kokoro-app` 需要同源 BFF 来承接浏览器请求，但业务编排不应塞进 Web，也不应把 Gateway
+误认为业务层或复制一套平行 DTO。未来业务编排服务与本仓库 Gateway 是两个不同的独立子仓库。
 
 ## 1. 结论
 
-统一业务接入子仓库就是独立的 `LordFoxFairy/kokoro-gateway`：
+浏览器侧的统一业务接入由 `kokoro-app` 的同源 BFF 负责；未来业务层规划为独立的
+`kokoro-business` 服务；`kokoro-gateway` 只作为可选的传输/入口适配器：
 
 ```text
 Browser
   → kokoro-app same-origin /api/* BFF
-  → kokoro-gateway server-only unified entry
-  → Session / Hub / User / System / Agent / Payment / Billing
+       ├─ Chat adapter → (optional) kokoro-gateway /sessions/* → kokoro-session
+       └─ business adapter → kokoro-business → domain services
 ```
 
-`kokoro-gateway` 是独立 GitHub 仓库、独立版本线、独立部署单元。它不能作为 Web 的
-`workspace:`、`file:`、git submodule 或源码目录引入。浏览器永远不知道 Gateway URL，
-也不直接调用领域服务。
+`kokoro-business` 与 `kokoro-gateway` 都是独立 GitHub 仓库、独立版本线、独立部署单元。它们
+不能作为 Web 的 `workspace:`、`file:`、git submodule 或源码目录引入。浏览器永远不知道
+Gateway、Business 或领域服务 URL，也不直接调用领域服务。
 
-## 2. Gateway 统一什么
+本文件不宣称 `kokoro-business` 已实现；其仓库名称、HTTP 契约和上线计划需在单独的业务层
+设计中确定。本仓库只记录 Gateway 已有的传输路由与边界。
 
-Gateway 统一的是跨服务接入边界和业务入口，不是所有领域事实：
+## 2. `kokoro-app`、Business 与 Gateway 各自负责什么
 
-- Web BFF 服务认证、请求 ID 和受信来源上下文；
+### `kokoro-app`：浏览器同源 BFF 与 Chat adapter
+
+- 浏览器同源 `/api/*` 路径、HttpOnly session envelope、Origin 检查和公开错误投影；
+- Composer/SessionEngine 使用的 `/api/session/*` Chat adapter；
+- 将 Direct Chat 与 Project Chat 映射到同一 Session contract，并保留 `project_ref`/scope；
+- 面向页面的聚合、加载/错误状态和浏览器安全边界。
+
+### `kokoro-business`：未来独立业务编排服务
+
+- 跨领域业务用例、业务规则、聚合 DTO 和业务级幂等/审计策略；
+- Projects、Skills、Scheduled、Agents、Billing 等需要跨服务协作的业务流程；
+- 通过稳定的服务端契约调用领域服务，不包含 React、浏览器 Cookie 或页面状态。
+
+以上是目标边界，不代表本仓库已经实现 `kokoro-business`。
+
+### `kokoro-gateway`：可选传输/入口适配器
+
+Gateway 只统一 server-to-server 的传输边界，不是业务入口的权威，也不拥有领域事实：
+
+- Web BFF 服务认证、请求 ID 和受信来源上下文的传输处理；
 - `/sessions`、`/hub`、`/auth`、`/bff`、`/system`、`/connections`、`/payment`、
   `/billing-service` 等 namespace 路由；
 - path/query 保留与必要的 namespace 前缀移除；
 - principal header 的路由级 allowlist；
 - SSE、artifact、file、delivery 的流式透传；
 - 上游状态、错误、超时和不可用状态的边界表达；
-- 未来显式迁移进来的跨域编排、幂等存储和审计能力。
+- 已由调用方/上游定义好的请求的传输，不在 Gateway 中新增业务规则。
 
-当前兼容阶段，Gateway 不重复持有 Session、Skill、Project、Billing 或 Runtime 的业务事实。
+当前实现中，Gateway 可被 `kokoro-app` 的 Chat adapter 选择为中间传输 hop，也可以在本地/迁移
+阶段绕过。未来若 `kokoro-business` 需要经过 Gateway，必须先定义独立的 service-auth 与
+业务传输契约；这不属于本仓库当前实现。Gateway 不重复持有 Session、Skill、Project、Billing
+或 Runtime 的业务事实，也不实现跨领域编排、业务级幂等或审计权威。
 
 ## 3. 领域服务各自拥有的事实
 
@@ -45,12 +69,13 @@ Gateway 统一的是跨服务接入边界和业务入口，不是所有领域事
 | `kokoro-agent` | Agent connection setup 与连接状态 |
 | Payment/Billing | 收银台、订单、独立计费事实 |
 
-Web 只渲染这些领域服务经过 BFF/Gateway 暴露的公开投影；Web 不持有数据库、队列、
-runtime JWT、内部 namespace 或服务 secret。
+Web 只渲染这些领域服务经过 BFF 暴露的公开投影；Business（实现后）负责跨服务用例，
+Gateway 只负责可选传输；Web 不持有数据库、队列、runtime JWT、内部 namespace 或服务
+secret。
 
 ## 4. Web 配置契约
 
-Web 侧生产/集成环境优先只配置一个 server-only 地址：
+Web 侧在选择 Gateway 传输 hop 的生产/集成环境可配置一个 server-only 地址：
 
 ```dotenv
 KOKORO_DOMAIN="app.example.com"
@@ -69,7 +94,8 @@ NEXT_PUBLIC_SESSION_PREVIEW="0"
 
 `KOKORO_USER_BASE_URL`、`KOKORO_SESSION_BASE_URL`、`KOKORO_HUB_BASE_URL`、
 `KOKORO_SYSTEM_BASE_URL`、`KOKORO_AGENT_BASE_URL`、`KOKORO_PAYMENT_BASE_URL` 和
-`KOKORO_BILLING_BASE_URL` 只保留为分阶段迁移覆盖项；统一部署不需要设置它们。
+`KOKORO_BILLING_BASE_URL` 可以作为分阶段迁移或直连覆盖项；是否使用 Gateway 由各 BFF 的
+部署配置决定。统一设置 Gateway 不是业务层的替代方案。
 
 ## 5. Gateway 配置契约
 
@@ -118,10 +144,13 @@ Forwarded: host=<KOKORO_DOMAIN>
 验收顺序固定为：
 
 1. 用合成 Session upstream 验证 Chat message、SSE、HITL、artifact 和 status/body 保真；
-2. 用 `KOKORO_GATEWAY_BASE_URL` 让非生产 Web BFF 只连接 Gateway；
-3. 逐个接通 Hub、User、System、Agent、Payment、Billing，并验证各自 allowlist；
-4. 验证真实 ACL、secret、TLS、域名 `Forwarded`、回滚和重复提交幂等；
+2. 选择 Gateway hop 时，用 `KOKORO_GATEWAY_BASE_URL` 让非生产 Web BFF 通过 Gateway，
+   保持浏览器路径为 `/api/*`；Chat 也可以在迁移阶段直连 `kokoro-session`；
+3. 业务层实现后，先验证 `kokoro-business` 的业务契约，再逐个接通 Hub、User、System、
+   Agent、Payment、Billing，并验证各自 allowlist；
+4. 验证真实 ACL、secret、TLS、域名 `Forwarded`、回滚，以及由 Business/Session 所属的
+   重复提交幂等；
 5. 完成后才把对应部署标记为 live，不用 preview fixture 代替真实后端联调。
 
-这套拆分使 `kokoro` 保持一个独立的 Web 子仓库，同时让后续业务服务替换、扩展或拆分时，
-浏览器 API 和页面组件保持稳定。
+这套拆分使 `kokoro` 保持一个独立的 Web 子仓库，同时让 `kokoro-business`、领域服务和
+可选 Gateway 在后续替换、扩展或拆分时，浏览器 API 和页面组件保持稳定。

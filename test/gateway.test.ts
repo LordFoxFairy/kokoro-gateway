@@ -370,7 +370,7 @@ test("rebuilds trusted Forwarded and preserves the user runtime bearer", async (
   })
 })
 
-test("forwards the complete Chat message, control, share, and file path surface", async () => {
+test("forwards the complete Chat surface and preserves project scope transport", async () => {
   const observed: Array<{ method: string; url: string; body: string }> = []
   await withUpstream(async ({ method, url, body }) => {
     observed.push({ method, url, body: body.toString("utf8") })
@@ -378,7 +378,8 @@ test("forwards the complete Chat message, control, share, and file path surface"
     const app = buildApp({ ...baseConfig, sessionBaseUrl: url })
     const headers = { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-bff-secret" }
     const requests = [
-      { method: "POST", url: "/sessions/SESSION_ID/messages", payload: { content: "hello", idempotency_key: "KEY" } },
+      { method: "GET", url: "/sessions?scope=project&project_ref=PROJECT_REF&cursor=CURSOR", payload: undefined },
+      { method: "POST", url: "/sessions/SESSION_ID/messages", payload: { content: "hello", idempotency_key: "KEY", project_ref: "PROJECT_REF" } },
       { method: "POST", url: "/sessions/SESSION_ID/runs/RUN_ID/control", payload: { kind: "run.cancel", decision_id: "DECISION_ID" } },
       { method: "PATCH", url: "/sessions/SESSION_ID/title", payload: { title: "Fixture title" } },
       { method: "DELETE", url: "/sessions/SESSION_ID", payload: undefined },
@@ -399,7 +400,8 @@ test("forwards the complete Chat message, control, share, and file path surface"
     await app.close()
   })
   assert.deepEqual(observed, [
-    { method: "POST", url: "/sessions/SESSION_ID/messages", body: '{"content":"hello","idempotency_key":"KEY"}' },
+    { method: "GET", url: "/sessions?scope=project&project_ref=PROJECT_REF&cursor=CURSOR", body: "" },
+    { method: "POST", url: "/sessions/SESSION_ID/messages", body: '{"content":"hello","idempotency_key":"KEY","project_ref":"PROJECT_REF"}' },
     { method: "POST", url: "/sessions/SESSION_ID/runs/RUN_ID/control", body: '{"kind":"run.cancel","decision_id":"DECISION_ID"}' },
     { method: "PATCH", url: "/sessions/SESSION_ID/title", body: '{"title":"Fixture title"}' },
     { method: "DELETE", url: "/sessions/SESSION_ID", body: "" },

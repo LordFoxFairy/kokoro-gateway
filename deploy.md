@@ -1,7 +1,22 @@
-# kokoro-gateway deployment
+# kokoro-gateway deployment (optional transport hop)
 
-This repository is one independent deployable service. It is not imported into `kokoro-app`; deploy
-it as a separate process/container and make the Web BFF the only network caller.
+This repository is one independent, optional deployable service. It is not imported into
+`kokoro-app`; deploy it as a separate process/container only when an ingress or server-to-server
+transport hop is useful. The default Chat path does not require this service:
+
+```text
+Browser → kokoro-app BFF /api/session/* → kokoro-session
+```
+
+When enabled, the gateway is inserted without changing the browser contract:
+
+```text
+Browser → kokoro-app BFF /api/session/* → kokoro-gateway /sessions/* → kokoro-session
+```
+
+`kokoro-app` owns the same-origin BFF and Chat adapter, `kokoro-session` owns Chat/session
+lifecycle facts, and the future `kokoro-business` service (name pending) owns cross-service
+business orchestration. This gateway owns none of those business rules or source-of-truth data.
 
 ## Docker
 
@@ -28,7 +43,12 @@ KOKORO_UPSTREAM_TIMEOUT_MS=30000
 KOKORO_GATEWAY_BODY_LIMIT_BYTES=10485760
 ```
 
-Optional business upstreams (enable only the services deployed in this environment):
+Optional downstream transport upstreams (enable only the services deployed in this environment):
+
+These variables configure server-only pass-through destinations. They do not make this gateway a
+business layer and do not imply that the gateway owns the corresponding domain. Cross-service
+business flows belong in the future `kokoro-business` service (name pending), with the Web BFF
+delegating to that service when needed.
 
 ```dotenv
 KOKORO_USER_BASE_URL=http://kokoro-user:4211
@@ -50,9 +70,10 @@ KOKORO_BILLING_BASE_URL=http://kokoro-billing:4245
 them in the deployment secret store, not in the image or repository. `/healthz` is liveness;
 `/readyz` is 503 until the Session upstream is configured.
 
-## Web BFF binding
+## Web BFF binding (opt-in)
 
-In the independently deployed `kokoro-app`, set the server-side Gateway binding:
+Only set the server-side Gateway binding in the independently deployed `kokoro-app` when this
+optional transport hop is part of the deployment:
 
 ```dotenv
 KOKORO_GATEWAY_BASE_URL=http://kokoro-gateway:8080
@@ -65,12 +86,17 @@ added to React code. The Web BFF sends `x-kokoro-service: web-bff` and
 `x-kokoro-internal-secret`; the gateway then sends `x-kokoro-service: kokoro-gateway` and the
 separate Session credential upstream.
 
-Chat uses this exact path without a new `/chat` surface: `/api/session/*` → `/sessions/*` → Session.
-For a staged migration, `KOKORO_SESSION_BASE_URL=http://kokoro-gateway:8080` remains a supported
-legacy override, but a new deployment should use `KOKORO_GATEWAY_BASE_URL` so every Web BFF
-namespace shares one explicit Gateway entry point.
-To route the other Web BFF surfaces through the same gateway, point the Web server-only variables
-to the gateway root, except for the explicit collision-free payment prefixes:
+Chat uses this exact path without a new `/chat` surface: `/api/session/*` → optional `/sessions/*`
+transport hop → Session.
+Without the Gateway binding, `kokoro-app` connects its server-side Chat adapter directly to
+`kokoro-session`. For a staged migration, `KOKORO_SESSION_BASE_URL=http://kokoro-gateway:8080`
+remains a supported legacy override; `KOKORO_GATEWAY_BASE_URL` is the explicit opt-in binding for
+the gateway transport hop.
+
+Other Web BFF surfaces should not be pointed at this gateway merely because it is deployed. Add a
+transport route only when the selected deployment needs it; business orchestration still belongs
+to `kokoro-business` (name pending). If the other server-only variables intentionally use this
+gateway for compatibility transport, the collision-free prefixes are:
 
 ```dotenv
 KOKORO_USER_BASE_URL=http://kokoro-gateway:8080

@@ -1,9 +1,9 @@
 export interface GatewayConfig {
   /** Deployment hostname used only to construct the server-side Forwarded context. */
   domain: string
-  /** Session-compatible upstream. Missing means the process is intentionally not ready. */
+  /** Optional Session downstream for this transport hop; missing means the process is not ready. */
   sessionBaseUrl: string | undefined
-  /** Optional business upstreams. The gateway remains useful when only Session is deployed. */
+  /** Optional downstream transport endpoints; business orchestration lives outside this gateway. */
   hubBaseUrl: string | undefined
   userBaseUrl: string | undefined
   systemBaseUrl: string | undefined
