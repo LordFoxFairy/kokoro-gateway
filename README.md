@@ -85,7 +85,8 @@ npm run dev
 curl http://127.0.0.1:8080/healthz
 ```
 
-在 `kokoro-app/.env.local` 中保留同源 Web BFF 语义，只有 server-only upstream 改为：
+在 `kokoro-app/.env.local` 中保留同源 Web BFF 语义，只有 server-only upstream 改为
+Gateway 的 authority root（不要写成 `.../sessions`）：
 
 ```dotenv
 KOKORO_GATEWAY_BASE_URL=http://127.0.0.1:8080
@@ -93,7 +94,9 @@ KOKORO_INTERNAL_SECRET_WEB_BFF=replace-with-web-bff-secret
 ```
 
 这一个 Web 变量会让 Chat、User、Hub、System、Agent、Payment 和独立 Billing 的 server-only
-基址自动使用对应 Gateway namespace。显式的 `KOKORO_*_BASE_URL` 仍可单独覆盖，用于分阶段迁移：
+请求自动进入对应 Gateway namespace：Web BFF 在 path 上生成 `/sessions/*`、`/auth/*`、
+`/bff/*`、`/hub/*`、`/system/*`、`/connections/*`，支付 adapter 使用 `/payment/*` 和
+`/billing-service/*`。显式的 `KOKORO_*_BASE_URL` 仍可单独覆盖，用于分阶段迁移：
 
 ```dotenv
 KOKORO_USER_BASE_URL=http://127.0.0.1:8080
