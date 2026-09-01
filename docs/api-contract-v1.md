@@ -39,8 +39,44 @@ Forwarded: host=<KOKORO_DOMAIN>
 ```
 
 `Authorization`、`Last-Event-ID`、`x-kokoro-request-id` 和 Web BFF 派生的 principal 头按
-允许列表转发；`Cookie`、`X-Domain`、`Host`、`X-Forwarded-*`、service credential 和旧的
-tenant/site header 不转发。Gateway 不信任浏览器自己提供的部署域名。
+**路由所属 bounded context 的 allowlist** 转发：Hub 允许 `x-kokoro-namespace` 与
+`x-kokoro-user-id`，User 面允许 User principal 头；Session、System、Agent、Payment 和
+Billing 面默认不接收这些 principal 头。`Cookie`、`X-Domain`、`Host`、`X-Forwarded-*`、
+service credential 和旧的 tenant/site header 不转发。Gateway 不信任浏览器自己提供的部署域名。
+
+这一区分是刻意的：`x-kokoro-namespace` 只表示 Hub 的业务 workspace scope，不是 GA
+RuntimeNamespace，也不是浏览器可选择的身份轴。Chat 的 `/sessions/*` 仅接收 Session
+传输所需的公共头和服务端 bearer。
+
+### 2.1 Chat compatibility endpoint matrix
+
+Gateway 不重写 Chat 的资源名或 JSON；下表只固定当前 Web BFF 允许通过的 Session 路径。
+`{session_id}`、`{run_id}`、`{decision_id}`、`{content_hash}` 和 `{share_id}` 都是不透明引用，
+请求体、响应体和 SSE event 的权威字段继续以 `kokoro-app/docs/integration/user-web-api-contract-v4.md`
+及 Root `contract/` 为准。
+
+| Method | Gateway path | Web capability | Transport rule |
+| --- | --- | --- | --- |
+| `GET` | `/sessions` | Session list | Preserve cursor/query and JSON status/body |
+| `GET` | `/sessions/{session_id}` | Snapshot | Preserve JSON status/body; `404/410` remains upstream semantics |
+| `POST` | `/sessions/{session_id}/messages` | Create message/run | Preserve `project_ref`, agent/model/mode, skills, connectors and idempotency fields |
+| `GET` | `/sessions/{session_id}/events` | SSE replay/live stream | Preserve `text/event-stream`, `Last-Event-ID`, cache headers and event bytes |
+| `POST` | `/sessions/{session_id}/runs/{run_id}/control` | Cancel/HITL resume | Preserve decision body and receipt/status codes |
+| `PATCH` | `/sessions/{session_id}/title` | Rename session | Preserve flat rename receipt and validation errors |
+| `DELETE` | `/sessions/{session_id}` | Soft delete | Preserve delete receipt and idempotent status |
+| `POST` | `/sessions/{session_id}/share` | Create share | Preserve share receipt and idempotency semantics |
+| `DELETE` | `/sessions/{session_id}/share` | Revoke share | Preserve revoke receipt/status |
+| `GET` | `/sessions/{session_id}/files/{path}` | Workspace file | Stream binary body and content headers without buffering |
+| `GET` | `/sessions/{session_id}/deliveries/{content_hash}` | Delivery download | Stream binary body with `content-length`/`content-disposition` |
+| `GET` | `/models` and `/models/*` | Model catalog | Pass through Session catalog response |
+| `GET` | `/agents` and `/agents/*` | Agent catalog | Pass through Session catalog response |
+| `GET` | `/artifacts` and `/artifacts/*` | Library/artifacts | Preserve cursor and binary projections |
+| `GET` | `/billing/*` | Compatibility billing reads | Remains Session-owned; do not route to `/billing-service` |
+| `GET` | `/shared/*` | Shared reads | Preserve public shared response/status |
+
+For every listed path, the gateway preserves upstream HTTP status and response body. Network failure
+or timeout is mapped only at this transport boundary to the namespace-specific `502` error; upstream
+`401/403/409/422/5xx` is not normalized into a generic success or fixture response.
 
 ## 3. 路由表
 

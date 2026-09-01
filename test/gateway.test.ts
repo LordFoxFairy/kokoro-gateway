@@ -95,12 +95,19 @@ test("routes Chat and each business namespace without changing the Web BFF paths
   await withUpstream(async ({ url, headers }) => {
     assert.equal(url, "/connections/setup?platform=telegram")
     assert.equal(headers["x-kokoro-internal-secret"], "agent-secret")
+    assert.equal(headers["x-kokoro-namespace"], "namespace_fixture")
+    assert.equal(headers["x-kokoro-user-id"], "user_fixture")
   }, async (url) => {
     const app = buildApp({ ...baseConfig, agentBaseUrl: url })
     const response = await app.inject({
       method: "GET",
       url: "/connections/setup?platform=telegram",
-      headers: { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-bff-secret" },
+      headers: {
+        "x-kokoro-service": "web-bff",
+        "x-kokoro-internal-secret": "web-bff-secret",
+        "x-kokoro-namespace": "namespace_fixture",
+        "x-kokoro-user-id": "user_fixture",
+      },
     })
     assert.equal(response.statusCode, 200)
     await app.close()
@@ -188,6 +195,8 @@ test("rebuilds trusted Forwarded and preserves the user runtime bearer", async (
     assert.equal(headers.authorization, "Bearer runtime-jwt-fixture")
     assert.equal(headers["x-kokoro-service"], "kokoro-gateway")
     assert.equal(headers["x-kokoro-internal-secret"], "session-secret")
+    assert.equal(headers["x-kokoro-namespace"], undefined)
+    assert.equal(headers["x-kokoro-user-id"], undefined)
     assert.equal(headers["x-forwarded-for"], undefined)
     assert.equal(headers["x-domain"], undefined)
     assert.equal(headers["x-kokoro-request-id"], "request-fixture")
@@ -204,6 +213,8 @@ test("rebuilds trusted Forwarded and preserves the user runtime bearer", async (
         "x-forwarded-for": "attacker",
         forwarded: "for=attacker",
         "x-domain": "evil.test",
+        "x-kokoro-namespace": "attacker_namespace",
+        "x-kokoro-user-id": "attacker_user",
         "x-kokoro-request-id": "request-fixture",
         "content-type": "application/json",
       },

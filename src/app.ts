@@ -31,6 +31,8 @@ type RouteDefinition = {
   secret: SecretKey
   /** Remove the gateway namespace before forwarding, e.g. `/payment/billing/plans`. */
   stripPrefix?: boolean
+  /** Principal headers are opt-in per bounded context, never global. */
+  principalHeaders?: readonly string[]
   unavailableError: string
   unreachableError: string
 }
@@ -48,17 +50,18 @@ const ROUTES: readonly RouteDefinition[] = [
   { prefix: "/artifacts", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
   { prefix: "/billing", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
   { prefix: "/shared", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
-  { prefix: "/hub", upstream: "hubBaseUrl", secret: "hubInternalSecret", unavailableError: "hub_not_configured", unreachableError: "hub_unreachable" },
-  { prefix: "/auth", upstream: "userBaseUrl", secret: "userInternalSecret", unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
-  { prefix: "/bff", upstream: "userBaseUrl", secret: "userInternalSecret", unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
+  { prefix: "/hub", upstream: "hubBaseUrl", secret: "hubInternalSecret", principalHeaders: ["x-kokoro-namespace", "x-kokoro-user-id", "x-kokoro-actor-id", "x-user-id"], unavailableError: "hub_not_configured", unreachableError: "hub_unreachable" },
+  { prefix: "/auth", upstream: "userBaseUrl", secret: "userInternalSecret", principalHeaders: ["x-kokoro-user-id", "x-kokoro-actor-id", "x-user-id"], unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
+  { prefix: "/bff", upstream: "userBaseUrl", secret: "userInternalSecret", principalHeaders: ["x-kokoro-user-id", "x-kokoro-actor-id", "x-user-id"], unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
   { prefix: "/system", upstream: "systemBaseUrl", secret: "systemInternalSecret", unavailableError: "system_not_configured", unreachableError: "system_unreachable" },
-  { prefix: "/connections", upstream: "agentBaseUrl", secret: "agentInternalSecret", unavailableError: "agent_not_configured", unreachableError: "agent_unreachable" },
+  { prefix: "/connections", upstream: "agentBaseUrl", secret: "agentInternalSecret", principalHeaders: ["x-kokoro-namespace", "x-kokoro-user-id"], unavailableError: "agent_not_configured", unreachableError: "agent_unreachable" },
   { prefix: "/payment", upstream: "paymentBaseUrl", secret: "paymentInternalSecret", stripPrefix: true, unavailableError: "payment_not_configured", unreachableError: "payment_unreachable" },
   { prefix: "/billing-service", upstream: "billingBaseUrl", secret: "billingInternalSecret", stripPrefix: true, unavailableError: "billing_not_configured", unreachableError: "billing_unreachable" },
 ]
 
-// Only these caller headers are part of the Session-compatible public transport.
-// Service credentials and all deployment-context headers are reconstructed below.
+// Only these caller headers are part of the common public transport.
+// Service credentials, principal headers and deployment-context headers are
+// reconstructed or explicitly allowed by the route below.
 const REQUEST_HEADERS = new Set([
   "accept",
   "accept-encoding",
@@ -72,14 +75,6 @@ const REQUEST_HEADERS = new Set([
   "prefer",
   "user-agent",
   "x-kokoro-request-id",
-  // These principal headers are written by kokoro-app's BFF after it opens
-  // the HttpOnly envelope. The browser cannot reach this gateway route with a
-  // valid service credential, and its own spoofed copies never bypass that
-  // boundary.
-  "x-user-id",
-  "x-kokoro-namespace",
-  "x-kokoro-user-id",
-  "x-kokoro-actor-id",
   "traceparent",
   "tracestate",
 ])
@@ -126,7 +121,7 @@ export function buildApp(config: GatewayConfig): FastifyInstance {
     try {
       const upstream = await fetch(toUpstreamUrl(baseUrl, request.raw.url ?? "/", route), {
         method: request.method,
-        headers: forwardedRequestHeaders(request, config, route.secret),
+        headers: forwardedRequestHeaders(request, config, route),
         body: ["GET", "HEAD", "DELETE", "OPTIONS"].includes(request.method)
           ? undefined
           : request.body instanceof Buffer && request.body.length > 0
@@ -179,19 +174,19 @@ function constantTimeEqual(left: string, right: string): boolean {
 function forwardedRequestHeaders(
   request: FastifyRequest,
   config: GatewayConfig,
-  secretKey: SecretKey,
+  route: RouteDefinition,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "x-kokoro-service": config.sessionServiceValue || GATEWAY_SERVICE,
     forwarded: `host=${config.domain}`,
   }
-  const internalSecret = config[secretKey]
+  const internalSecret = config[route.secret]
   if (internalSecret !== undefined) {
     headers["x-kokoro-internal-secret"] = internalSecret
   }
   for (const [name, value] of Object.entries(request.headers)) {
     const lowerName = name.toLowerCase()
-    if (!REQUEST_HEADERS.has(lowerName)) continue
+    if (!REQUEST_HEADERS.has(lowerName) && !(route.principalHeaders ?? []).includes(lowerName)) continue
     if (typeof value === "string") headers[lowerName] = value
     else if (Array.isArray(value)) headers[lowerName] = value.join(", ")
   }

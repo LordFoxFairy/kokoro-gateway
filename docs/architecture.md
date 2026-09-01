@@ -4,8 +4,9 @@
 
 `kokoro-gateway` is a separate deployable repository. It must not be added as a `file:` dependency,
 git submodule, or workspace member of `kokoro-app`. The Web repository owns its pages, Composer,
-capsules, same-origin BFF, HttpOnly session envelope and Origin checks. The gateway owns business
-orchestration and service-to-service adapters.
+capsules, same-origin BFF, HttpOnly session envelope and Origin checks. This repository currently
+owns the Session-compatible transport boundary and service-to-service adapter; business orchestration,
+idempotency storage and audit authority remain future gateway capabilities until explicitly transferred.
 
 The first migration keeps the browser contract stable:
 
