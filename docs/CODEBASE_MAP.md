@@ -48,6 +48,7 @@ envelopes, Session facts, fixture data, or runtime namespace authority.
 | `/connections` | Agent | Agent connection setup |
 | `/payment`, `/billing-service` | Payment/Billing | Explicitly namespaced service surfaces; gateway prefix is stripped upstream |
 
+`docs/business-gateway-contract-v1.md` defines the repository-level business entry boundary;
 `docs/api-contract-v1.md` defines the transport contract. Root `contract/`
 remains the cross-repository schema authority; this repository does not copy
 Root Proto/OpenAPI or create a second business DTO source.
