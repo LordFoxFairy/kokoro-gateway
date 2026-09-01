@@ -25,6 +25,24 @@ KOKORO_SESSION_BASE_URL=http://kokoro-session:8085
 KOKORO_SESSION_INTERNAL_SECRET=SECRET_SHARED_WITH_SESSION
 ```
 
+Optional business upstreams (enable only the services deployed in this environment):
+
+```dotenv
+KOKORO_USER_BASE_URL=http://kokoro-user:4211
+KOKORO_HUB_BASE_URL=http://kokoro-hub:4251
+KOKORO_SYSTEM_BASE_URL=http://kokoro-system:4240
+KOKORO_AGENT_BASE_URL=http://kokoro-agent:4260
+KOKORO_PAYMENT_BASE_URL=http://kokoro-payment:4241
+KOKORO_BILLING_BASE_URL=http://kokoro-billing:4245
+# Optional per-upstream service credentials:
+# KOKORO_USER_INTERNAL_SECRET=...
+# KOKORO_HUB_INTERNAL_SECRET=...
+# KOKORO_SYSTEM_INTERNAL_SECRET=...
+# KOKORO_AGENT_INTERNAL_SECRET=...
+# KOKORO_PAYMENT_INTERNAL_SECRET=...
+# KOKORO_BILLING_INTERNAL_SECRET=...
+```
+
 `KOKORO_GATEWAY_SHARED_SECRET` and `KOKORO_SESSION_INTERNAL_SECRET` are separate credentials. Put
 them in the deployment secret store, not in the image or repository. `/healthz` is liveness;
 `/readyz` is 503 until the Session upstream is configured.
@@ -42,6 +60,19 @@ The browser still calls `kokoro-app` `/api/session/*`. No gateway URL or service
 added to React code. The Web BFF sends `x-kokoro-service: web-bff` and
 `x-kokoro-internal-secret`; the gateway then sends `x-kokoro-service: kokoro-gateway` and the
 separate Session credential upstream.
+
+Chat uses this exact path without a new `/chat` surface: `/api/session/*` → `/sessions/*` → Session.
+To route the other Web BFF surfaces through the same gateway, point the Web server-only variables
+to the gateway root, except for the explicit collision-free payment prefixes:
+
+```dotenv
+KOKORO_USER_BASE_URL=http://kokoro-gateway:8080
+KOKORO_HUB_BASE_URL=http://kokoro-gateway:8080
+KOKORO_SYSTEM_BASE_URL=http://kokoro-gateway:8080
+KOKORO_AGENT_BASE_URL=http://kokoro-gateway:8080
+KOKORO_PAYMENT_BASE_URL=http://kokoro-gateway:8080/payment
+KOKORO_BILLING_BASE_URL=http://kokoro-gateway:8080/billing-service
+```
 
 ## Cloud deployment
 

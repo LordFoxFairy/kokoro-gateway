@@ -16,6 +16,11 @@ kokoro-app /api/session/*
   → kokoro-session
 ```
 
+Chat is intentionally not exposed as a second `/chat/*` API. The Web Composer and SessionEngine
+continue to call `/api/session/sessions/{session_id}/messages`; the Web BFF maps that request to
+`/sessions/{session_id}/messages` on this gateway. Project Chat uses the same path and only changes
+the session scope/project reference.
+
 The browser never knows the gateway URL and never sends `X-Domain`, `Forwarded`, service credentials,
 internal tenant ids, runtime tokens or gateway selectors.
 
@@ -40,6 +45,13 @@ The compatible upstream covers the existing Web session paths:
 - billing summary, ledger and model breakdown reads under `/billing/*`, because Web uses the
   same Session-compatible BFF base URL for them.
 
+The gateway also has optional server-only namespaces for the rest of the Web BFF boundary:
+`/hub/*`, `/auth/*`, `/bff/*`, `/system/*`, `/connections/*`, `/payment/*`, and
+`/billing-service/*`. They are explicit routing namespaces, not browser APIs. `/billing/*` remains
+Session-owned so the existing Chat billing reads cannot collide with a separate billing service.
+The optional upstreams can be enabled independently; a missing one returns a typed 503 instead of
+silently falling back to a fixture or another service.
+
 The gateway initially forwards these requests without owning Session facts. It must preserve status,
 content type, SSE cache headers, opaque ids, request id, binary response headers (`content-length`
 and `content-disposition`) and user-visible error semantics. Network failure and timeout are mapped
@@ -59,8 +71,13 @@ queues and adapters remain server-only here.
 
 1. Add `kokoro-gateway` to the Root contract consumer manifest and generate its declared closure.
 2. Run the gateway in compatibility mode against a synthetic Session fixture.
-3. Point non-production `kokoro-app` `KOKORO_SESSION_BASE_URL` to the gateway.
-4. Verify duplicate-submit idempotency, SSE reconnect, HITL cancel/resume, 401/403/409/5xx,
-   artifact streaming and exact `Forwarded` reconstruction.
-5. Only then enable gateway-owned orchestration; keep Session as lifecycle/projection owner until
+3. Point non-production `kokoro-app` `KOKORO_SESSION_BASE_URL` to the gateway; keep its browser
+   path at `/api/session/*`.
+4. Point the other Web BFF upstream variables to the gateway only after enabling their matching
+   gateway namespace (`/hub`, `/auth` + `/bff`, `/system`, `/connections`, `/payment`, or
+   `/billing-service`).
+5. Verify duplicate-submit idempotency, SSE reconnect, HITL cancel/resume, 401/403/409/5xx,
+   artifact streaming and exact `Forwarded` reconstruction for Chat first, then verify each
+   optional namespace independently.
+6. Only then enable gateway-owned orchestration; keep Session as lifecycle/projection owner until
    the authority transfer is explicitly versioned.

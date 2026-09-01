@@ -8,8 +8,20 @@ import { configFromEnv, type GatewayConfig } from "../src/config.js"
 const baseConfig: GatewayConfig = {
   domain: "dev.kokoro.localhost",
   sessionBaseUrl: undefined,
+  hubBaseUrl: undefined,
+  userBaseUrl: undefined,
+  systemBaseUrl: undefined,
+  agentBaseUrl: undefined,
+  paymentBaseUrl: undefined,
+  billingBaseUrl: undefined,
   gatewaySharedSecret: "web-bff-secret",
   sessionInternalSecret: "session-secret",
+  hubInternalSecret: "hub-secret",
+  userInternalSecret: "user-secret",
+  systemInternalSecret: "system-secret",
+  agentInternalSecret: "agent-secret",
+  paymentInternalSecret: "payment-secret",
+  billingInternalSecret: "billing-secret",
   sessionServiceValue: "kokoro-gateway",
   upstreamTimeoutMs: 500,
   bodyLimitBytes: 1024 * 1024,
@@ -56,6 +68,58 @@ test("accepts the billing paths used by the Web Session client", async () => {
   })
 })
 
+test("routes Chat and each business namespace without changing the Web BFF paths", async () => {
+  await withUpstream(async ({ url, headers }) => {
+    assert.equal(url, "/hub/self/skills/pool?scope=all")
+    assert.equal(headers.forwarded, "host=dev.kokoro.localhost")
+    assert.equal(headers["x-kokoro-service"], "kokoro-gateway")
+    assert.equal(headers["x-kokoro-internal-secret"], "hub-secret")
+    assert.equal(headers["x-kokoro-namespace"], "namespace_fixture")
+    assert.equal(headers["x-kokoro-user-id"], "user_fixture")
+  }, async (url) => {
+    const app = buildApp({ ...baseConfig, hubBaseUrl: url })
+    const response = await app.inject({
+      method: "GET",
+      url: "/hub/self/skills/pool?scope=all",
+      headers: {
+        "x-kokoro-service": "web-bff",
+        "x-kokoro-internal-secret": "web-bff-secret",
+        "x-kokoro-namespace": "namespace_fixture",
+        "x-kokoro-user-id": "user_fixture",
+      },
+    })
+    assert.equal(response.statusCode, 200)
+    await app.close()
+  })
+
+  await withUpstream(async ({ url, headers }) => {
+    assert.equal(url, "/connections/setup?platform=telegram")
+    assert.equal(headers["x-kokoro-internal-secret"], "agent-secret")
+  }, async (url) => {
+    const app = buildApp({ ...baseConfig, agentBaseUrl: url })
+    const response = await app.inject({
+      method: "GET",
+      url: "/connections/setup?platform=telegram",
+      headers: { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-bff-secret" },
+    })
+    assert.equal(response.statusCode, 200)
+    await app.close()
+  })
+
+  await withUpstream(async ({ url }) => {
+    assert.equal(url, "/billing/plans")
+  }, async (url) => {
+    const app = buildApp({ ...baseConfig, paymentBaseUrl: url })
+    const response = await app.inject({
+      method: "GET",
+      url: "/payment/billing/plans",
+      headers: { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-bff-secret" },
+    })
+    assert.equal(response.statusCode, 200)
+    await app.close()
+  })
+})
+
 test("accepts only the Web BFF service credential, not the browser bearer", async () => {
   const app = buildApp({ ...baseConfig, sessionBaseUrl: "http://session.invalid" })
   const browserBearer = await app.inject({
@@ -89,6 +153,8 @@ async function withUpstream(
         authorization: header(request.headers.authorization),
         "x-kokoro-service": header(request.headers["x-kokoro-service"]),
         "x-kokoro-internal-secret": header(request.headers["x-kokoro-internal-secret"]),
+        "x-kokoro-namespace": header(request.headers["x-kokoro-namespace"]),
+        "x-kokoro-user-id": header(request.headers["x-kokoro-user-id"]),
         "x-forwarded-for": header(request.headers["x-forwarded-for"]),
         "x-domain": header(request.headers["x-domain"]),
         "x-kokoro-request-id": header(request.headers["x-kokoro-request-id"]),

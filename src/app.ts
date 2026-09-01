@@ -3,13 +3,59 @@ import { Readable } from "node:stream"
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import type { GatewayConfig } from "./config.js"
 
-// These prefixes are the complete Session-compatible surface consumed by the
-// Web BFF. Billing intentionally stays here because the current browser
-// client uses the same `/api/session` base URL for its three billing reads.
-const ROUTE_PREFIXES = ["/sessions", "/models", "/agents", "/artifacts", "/billing"] as const
 const ROUTE_METHODS = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"] as const
 const BFF_SERVICE = "web-bff"
 const GATEWAY_SERVICE = "kokoro-gateway"
+
+type UpstreamKey =
+  | "sessionBaseUrl"
+  | "hubBaseUrl"
+  | "userBaseUrl"
+  | "systemBaseUrl"
+  | "agentBaseUrl"
+  | "paymentBaseUrl"
+  | "billingBaseUrl"
+
+type SecretKey =
+  | "sessionInternalSecret"
+  | "hubInternalSecret"
+  | "userInternalSecret"
+  | "systemInternalSecret"
+  | "agentInternalSecret"
+  | "paymentInternalSecret"
+  | "billingInternalSecret"
+
+type RouteDefinition = {
+  prefix: string
+  upstream: UpstreamKey
+  secret: SecretKey
+  /** Remove the gateway namespace before forwarding, e.g. `/payment/billing/plans`. */
+  stripPrefix?: boolean
+  unavailableError: string
+  unreachableError: string
+}
+
+// The browser contract stays same-origin in kokoro-app. These are server-only
+// gateway namespaces: Session keeps the canonical `/sessions/*` surface for
+// Chat; the remaining namespaces let Web BFFs share this deployable gateway
+// without importing each other's source code. `/billing` deliberately remains
+// Session-owned; storefront/billing services use explicit `/payment` and
+// `/billing-service` namespaces to avoid an ambiguous route.
+const ROUTES: readonly RouteDefinition[] = [
+  { prefix: "/sessions", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/models", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/agents", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/artifacts", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/billing", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/shared", upstream: "sessionBaseUrl", secret: "sessionInternalSecret", unavailableError: "upstream_not_configured", unreachableError: "session_unreachable" },
+  { prefix: "/hub", upstream: "hubBaseUrl", secret: "hubInternalSecret", unavailableError: "hub_not_configured", unreachableError: "hub_unreachable" },
+  { prefix: "/auth", upstream: "userBaseUrl", secret: "userInternalSecret", unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
+  { prefix: "/bff", upstream: "userBaseUrl", secret: "userInternalSecret", unavailableError: "user_not_configured", unreachableError: "user_unreachable" },
+  { prefix: "/system", upstream: "systemBaseUrl", secret: "systemInternalSecret", unavailableError: "system_not_configured", unreachableError: "system_unreachable" },
+  { prefix: "/connections", upstream: "agentBaseUrl", secret: "agentInternalSecret", unavailableError: "agent_not_configured", unreachableError: "agent_unreachable" },
+  { prefix: "/payment", upstream: "paymentBaseUrl", secret: "paymentInternalSecret", stripPrefix: true, unavailableError: "payment_not_configured", unreachableError: "payment_unreachable" },
+  { prefix: "/billing-service", upstream: "billingBaseUrl", secret: "billingInternalSecret", stripPrefix: true, unavailableError: "billing_not_configured", unreachableError: "billing_unreachable" },
+]
 
 // Only these caller headers are part of the Session-compatible public transport.
 // Service credentials and all deployment-context headers are reconstructed below.
@@ -26,6 +72,14 @@ const REQUEST_HEADERS = new Set([
   "prefer",
   "user-agent",
   "x-kokoro-request-id",
+  // These principal headers are written by kokoro-app's BFF after it opens
+  // the HttpOnly envelope. The browser cannot reach this gateway route with a
+  // valid service credential, and its own spoofed copies never bypass that
+  // boundary.
+  "x-user-id",
+  "x-kokoro-namespace",
+  "x-kokoro-user-id",
+  "x-kokoro-actor-id",
   "traceparent",
   "tracestate",
 ])
@@ -55,12 +109,13 @@ export function buildApp(config: GatewayConfig): FastifyInstance {
     return { status: "ready" }
   })
 
-  const passthrough = async (request: FastifyRequest, reply: FastifyReply) => {
+  const passthrough = (route: RouteDefinition) => async (request: FastifyRequest, reply: FastifyReply) => {
     if (!isTrustedWebBff(request, config.gatewaySharedSecret)) {
       return reply.code(401).send({ error: "unauthorized" })
     }
-    if (!config.sessionBaseUrl) {
-      return reply.code(503).send({ error: "upstream_not_configured" })
+    const baseUrl = config[route.upstream]
+    if (!baseUrl) {
+      return reply.code(503).send({ error: route.unavailableError })
     }
 
     const controller = new AbortController()
@@ -69,9 +124,9 @@ export function buildApp(config: GatewayConfig): FastifyInstance {
     request.raw.once("aborted", abortOnClientDisconnect)
 
     try {
-      const upstream = await fetch(toUpstreamUrl(config.sessionBaseUrl, request.raw.url ?? "/"), {
+      const upstream = await fetch(toUpstreamUrl(baseUrl, request.raw.url ?? "/", route), {
         method: request.method,
-        headers: forwardedRequestHeaders(request, config),
+        headers: forwardedRequestHeaders(request, config, route.secret),
         body: ["GET", "HEAD", "DELETE", "OPTIONS"].includes(request.method)
           ? undefined
           : request.body instanceof Buffer && request.body.length > 0
@@ -92,18 +147,18 @@ export function buildApp(config: GatewayConfig): FastifyInstance {
       // fetch stream accepted by Readable.fromWeb.
       return reply.send(Readable.fromWeb(upstream.body as never))
     } catch (error) {
-      if (controller.signal.aborted) return reply.code(502).send({ error: "session_unreachable" })
+      if (controller.signal.aborted) return reply.code(502).send({ error: route.unreachableError })
       request.log.error({ err: error }, "upstream request failed")
-      return reply.code(502).send({ error: "session_unreachable" })
+      return reply.code(502).send({ error: route.unreachableError })
     } finally {
       clearTimeout(timeout)
       request.raw.removeListener("aborted", abortOnClientDisconnect)
     }
   }
 
-  for (const prefix of ROUTE_PREFIXES) {
-    app.route({ method: [...ROUTE_METHODS], url: prefix, handler: passthrough })
-    app.route({ method: [...ROUTE_METHODS], url: `${prefix}/*`, handler: passthrough })
+  for (const route of ROUTES) {
+    app.route({ method: [...ROUTE_METHODS], url: route.prefix, handler: passthrough(route) })
+    app.route({ method: [...ROUTE_METHODS], url: `${route.prefix}/*`, handler: passthrough(route) })
   }
   return app
 }
@@ -121,13 +176,18 @@ function constantTimeEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftBytes, rightBytes)
 }
 
-function forwardedRequestHeaders(request: FastifyRequest, config: GatewayConfig): Record<string, string> {
+function forwardedRequestHeaders(
+  request: FastifyRequest,
+  config: GatewayConfig,
+  secretKey: SecretKey,
+): Record<string, string> {
   const headers: Record<string, string> = {
     "x-kokoro-service": config.sessionServiceValue || GATEWAY_SERVICE,
     forwarded: `host=${config.domain}`,
   }
-  if (config.sessionInternalSecret !== undefined) {
-    headers["x-kokoro-internal-secret"] = config.sessionInternalSecret
+  const internalSecret = config[secretKey]
+  if (internalSecret !== undefined) {
+    headers["x-kokoro-internal-secret"] = internalSecret
   }
   for (const [name, value] of Object.entries(request.headers)) {
     const lowerName = name.toLowerCase()
@@ -138,9 +198,12 @@ function forwardedRequestHeaders(request: FastifyRequest, config: GatewayConfig)
   return headers
 }
 
-function toUpstreamUrl(baseUrl: string, incomingUrl: string): string {
+function toUpstreamUrl(baseUrl: string, incomingUrl: string, route: RouteDefinition): string {
   const base = new URL(baseUrl)
   const incoming = new URL(incomingUrl, "http://gateway.invalid")
   const basePath = base.pathname.replace(/\/+$/, "")
-  return new URL(`${basePath}${incoming.pathname}${incoming.search}`, base.origin).toString()
+  const path = route.stripPrefix
+    ? incoming.pathname.slice(route.prefix.length) || "/"
+    : incoming.pathname
+  return new URL(`${basePath}${path}${incoming.search}`, base.origin).toString()
 }

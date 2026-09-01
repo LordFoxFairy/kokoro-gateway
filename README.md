@@ -3,7 +3,14 @@
 `kokoro-gateway` 是 Kokoro 的独立业务编排与服务间网关子仓库。它不是 Web 应用、不是
 `kokoro-platform` 的业务模块，也不是 `kokoro-app` 的 workspace package。
 
-第一阶段提供与 `kokoro-app` 当前 BFF 兼容的 Session upstream：
+Chat 在这里的准确承接是 **Session-compatible `/sessions/*`**，不是另造一个 `/chat/*` API：
+Composer/Engine 仍提交到 Web 的同源 `/api/session/sessions/{session_id}/messages`，Web BFF
+把它转给网关 `/sessions/{session_id}/messages`，网关再转给 Session。Direct Chat 与 Project
+Chat 只在 Session scope/project_ref 上不同，消息、Run、SSE、HITL、取消、文件、成果和分享
+继续共用这一条承接链路。
+
+第一阶段提供与 `kokoro-app` 当前 BFF 兼容的 Session upstream；现在同时保留了可选的业务
+namespace，让同一个独立网关能够承接 Web 的 Hub、User、System、Agent 和支付面：
 
 ```text
 Browser
@@ -37,16 +44,31 @@ Browser
 
 ## Routes
 
-当前只暴露 Session-compatible upstream：
+Chat/Session 主路由：
 
 - `GET /healthz`
 - `GET /readyz`
 - `GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS /sessions[/*]`
-- 同样的方法和路径范围：`/models[/*]`、`/agents[/*]`、`/artifacts[/*]`、`/billing[/*]`
+- 同样的方法和路径范围：`/models[/*]`、`/agents[/*]`、`/artifacts[/*]`、`/billing[/*]`、`/shared[/*]`
 
 `/billing/summary`、`/billing/ledger` 与 `/billing/by-model` 目前也由 Web 的
 `/api/session` client 发起，因此必须和 Chat 一起经过兼容网关；它们仍由 Session/Hub
 提供事实，Gateway 不在此阶段实现计费规则。
+
+可选业务路由（配置对应 upstream 后启用）：
+
+| Gateway namespace | Upstream env | Web BFF 用法 |
+| --- | --- | --- |
+| `/hub/*` | `KOKORO_HUB_BASE_URL` | Skills、MCP、connectors、Projects、Scheduled、Settings、Mail |
+| `/auth/*`、`/bff/*` | `KOKORO_USER_BASE_URL` | 登录换签、团队自助面；principal 头由 Web BFF 派生 |
+| `/system/*` | `KOKORO_SYSTEM_BASE_URL` | runtime manifest |
+| `/connections/*` | `KOKORO_AGENT_BASE_URL` | Agent connection setup |
+| `/payment/*` | `KOKORO_PAYMENT_BASE_URL` | payment storefront；会去掉 `/payment` 前缀 |
+| `/billing-service/*` | `KOKORO_BILLING_BASE_URL` | 独立 billing service；会去掉 `/billing-service` 前缀 |
+
+`/billing/*` 保留给 Session 的兼容读面，避免和 payment/billing service 产生歧义。Web BFF
+仍只访问自己的同源 `/api/*`，这些 namespace 只存在于 Web BFF 与 Gateway 的 server-only
+网络之间。
 
 `/readyz` 只在 `KOKORO_SESSION_BASE_URL` 已配置时返回 ready；它不会把未配置 upstream
 伪装成 live。真正的上游可用性由后续部署探针和集成 smoke 验证。
@@ -67,6 +89,33 @@ curl http://127.0.0.1:8080/healthz
 KOKORO_SESSION_BASE_URL=http://127.0.0.1:8080
 KOKORO_INTERNAL_SECRET_WEB_BFF=replace-with-web-bff-secret
 ```
+
+若需要让 Chat 之外的 Web BFF 也统一经过该网关，Web 侧可将对应 upstream 指向网关：
+
+```dotenv
+KOKORO_USER_BASE_URL=http://127.0.0.1:8080
+KOKORO_HUB_BASE_URL=http://127.0.0.1:8080
+KOKORO_SYSTEM_BASE_URL=http://127.0.0.1:8080
+KOKORO_AGENT_BASE_URL=http://127.0.0.1:8080
+KOKORO_PAYMENT_BASE_URL=http://127.0.0.1:8080/payment
+KOKORO_BILLING_BASE_URL=http://127.0.0.1:8080/billing-service
+```
+
+Gateway 侧对应变量则填写各真实业务服务地址（变量名相同但只存在 Gateway 进程内）：
+
+```dotenv
+KOKORO_SESSION_BASE_URL=http://kokoro-session:3900
+KOKORO_USER_BASE_URL=http://kokoro-user:4211
+KOKORO_HUB_BASE_URL=http://kokoro-hub:4251
+KOKORO_SYSTEM_BASE_URL=http://kokoro-system:4240
+KOKORO_AGENT_BASE_URL=http://kokoro-agent:4260
+KOKORO_PAYMENT_BASE_URL=http://kokoro-payment:4241
+KOKORO_BILLING_BASE_URL=http://kokoro-billing:4245
+```
+
+每个业务 upstream 可选配置独立的 `KOKORO_*_INTERNAL_SECRET`；不配置则不向该 upstream
+发送内部 secret。生产环境仍必须为 Session 配置 `KOKORO_SESSION_INTERNAL_SECRET`，并用网络
+ACL 限制只有 Web BFF 可以调用网关。
 
 网关侧对应：
 
