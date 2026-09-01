@@ -23,6 +23,8 @@ Browser
 浏览器路径不变。`kokoro-app` 只需要把 server-only 的 `KOKORO_SESSION_BASE_URL` 指向网关，
 不在前端增加 gateway URL、token 或 header selector。
 
+完整的 Chat、业务 namespace、认证边界与迁移验收见 [`docs/api-contract-v1.md`](docs/api-contract-v1.md)。
+
 ## 当前边界
 
 网关负责：
