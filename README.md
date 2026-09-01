@@ -20,8 +20,10 @@ Browser
   → kokoro-session
 ```
 
-浏览器路径不变。`kokoro-app` 只需要把 server-only 的 `KOKORO_SESSION_BASE_URL` 指向网关，
-不在前端增加 gateway URL、token 或 header selector。
+浏览器路径不变。新部署推荐只配置 Web server-only 的
+`KOKORO_GATEWAY_BASE_URL=http://kokoro-gateway:8080`，让所有 BFF namespace 共享同一个网关
+根地址；分阶段迁移仍可用 `KOKORO_SESSION_BASE_URL` 单独覆盖 Chat。两种配置都不进入前端，
+也不会把 gateway URL、token 或 header selector 暴露给浏览器。
 
 完整的 Chat、业务 namespace、认证边界与迁移验收见 [`docs/api-contract-v1.md`](docs/api-contract-v1.md)。
 
@@ -85,8 +87,8 @@ npm run dev
 curl http://127.0.0.1:8080/healthz
 ```
 
-在 `kokoro-app/.env.local` 中保留同源 Web BFF 语义，只有 server-only upstream 改为
-Gateway 的 authority root（不要写成 `.../sessions`）：
+在 `kokoro-app/.env.local` 中保留同源 Web BFF 语义，新部署只配置 Gateway 的 authority
+root（不要写成 `.../sessions`）：
 
 ```dotenv
 KOKORO_GATEWAY_BASE_URL=http://127.0.0.1:8080
