@@ -72,11 +72,11 @@ queues and adapters remain server-only here.
 
 1. Add `kokoro-gateway` to the Root contract consumer manifest and generate its declared closure.
 2. Run the gateway in compatibility mode against a synthetic Session fixture.
-3. Point non-production `kokoro-app` `KOKORO_SESSION_BASE_URL` to the gateway; keep its browser
-   path at `/api/session/*`.
-4. Point the other Web BFF upstream variables to the gateway only after enabling their matching
-   gateway namespace (`/hub`, `/auth` + `/bff`, `/system`, `/connections`, `/payment`, or
-   `/billing-service`).
+3. Point non-production `kokoro-app` `KOKORO_GATEWAY_BASE_URL` to the gateway; keep its browser
+   paths at `/api/*`. The Web BFF resolves the matching Gateway namespace automatically.
+4. Use explicit `KOKORO_*_BASE_URL` overrides only when a bounded context is being migrated
+   separately; otherwise the single Gateway base covers `/sessions`, `/hub`, `/auth` + `/bff`,
+   `/system`, `/connections`, `/payment`, and `/billing-service`.
 5. Verify duplicate-submit idempotency, SSE reconnect, HITL cancel/resume, 401/403/409/5xx,
    artifact streaming and exact `Forwarded` reconstruction for Chat first, then verify each
    optional namespace independently.

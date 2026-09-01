@@ -88,11 +88,12 @@ curl http://127.0.0.1:8080/healthz
 在 `kokoro-app/.env.local` 中保留同源 Web BFF 语义，只有 server-only upstream 改为：
 
 ```dotenv
-KOKORO_SESSION_BASE_URL=http://127.0.0.1:8080
+KOKORO_GATEWAY_BASE_URL=http://127.0.0.1:8080
 KOKORO_INTERNAL_SECRET_WEB_BFF=replace-with-web-bff-secret
 ```
 
-若需要让 Chat 之外的 Web BFF 也统一经过该网关，Web 侧可将对应 upstream 指向网关：
+这一个 Web 变量会让 Chat、User、Hub、System、Agent、Payment 和独立 Billing 的 server-only
+基址自动使用对应 Gateway namespace。显式的 `KOKORO_*_BASE_URL` 仍可单独覆盖，用于分阶段迁移：
 
 ```dotenv
 KOKORO_USER_BASE_URL=http://127.0.0.1:8080

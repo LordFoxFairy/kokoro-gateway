@@ -108,9 +108,13 @@ or timeout is mapped only at this transport boundary to the namespace-specific `
 
 ```dotenv
 NEXT_PUBLIC_SESSION_PREVIEW=0
-KOKORO_SESSION_BASE_URL=http://kokoro-gateway:8080
+KOKORO_GATEWAY_BASE_URL=http://kokoro-gateway:8080
 KOKORO_INTERNAL_SECRET_WEB_BFF=<shared-with-gateway>
 ```
+
+配置统一 Gateway 基址后，Web BFF 会按路由自动使用 `/sessions`、`/hub`、`/system`、
+`/connections`、`/payment` 和 `/billing-service` namespace。`KOKORO_*_BASE_URL` 显式值
+仍可覆盖单个 bounded context；浏览器路径和客户端契约保持不变。
 
 若把其它 Web BFF 也迁移到同一个 Gateway，Web 侧使用以下 server-only 地址；支付和独立
 Billing 使用 namespace 前缀：
