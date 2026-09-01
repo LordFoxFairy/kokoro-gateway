@@ -3,7 +3,7 @@ import { createServer } from "node:http"
 import { once } from "node:events"
 import test from "node:test"
 import { buildApp } from "../src/app.js"
-import type { GatewayConfig } from "../src/config.js"
+import { configFromEnv, type GatewayConfig } from "../src/config.js"
 
 const baseConfig: GatewayConfig = {
   domain: "dev.kokoro.localhost",
@@ -15,6 +15,20 @@ const baseConfig: GatewayConfig = {
   bodyLimitBytes: 1024 * 1024,
 }
 
+test("normalizes the deployment domain using the Web BFF hostname contract", () => {
+  const config = configFromEnv({
+    NODE_ENV: "test",
+    KOKORO_DOMAIN: "DEV.KOKORO.LOCALHOST.",
+    KOKORO_GATEWAY_SHARED_SECRET: "web-bff-secret",
+  })
+  assert.equal(config.domain, "dev.kokoro.localhost")
+  assert.throws(() => configFromEnv({
+    NODE_ENV: "test",
+    KOKORO_DOMAIN: "dev.kokoro.localhost:3000",
+    KOKORO_GATEWAY_SHARED_SECRET: "web-bff-secret",
+  }), /hostname without a port/)
+})
+
 test("health and readiness distinguish liveness from configured upstream", async () => {
   const notReady = buildApp(baseConfig)
   assert.equal((await notReady.inject("/healthz")).statusCode, 200)
@@ -24,6 +38,22 @@ test("health and readiness distinguish liveness from configured upstream", async
   const ready = buildApp({ ...baseConfig, sessionBaseUrl: "http://127.0.0.1:12345" })
   assert.equal((await ready.inject("/readyz")).statusCode, 200)
   await ready.close()
+})
+
+test("accepts the billing paths used by the Web Session client", async () => {
+  await withUpstream(async ({ url, headers }) => {
+    assert.equal(url, "/billing/summary")
+    assert.equal(headers.forwarded, "host=dev.kokoro.localhost")
+  }, async (url) => {
+    const app = buildApp({ ...baseConfig, sessionBaseUrl: url })
+    const response = await app.inject({
+      method: "GET",
+      url: "/billing/summary",
+      headers: { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-bff-secret" },
+    })
+    assert.equal(response.statusCode, 200)
+    await app.close()
+  })
 })
 
 test("accepts only the Web BFF service credential, not the browser bearer", async () => {
@@ -148,4 +178,46 @@ test("passes an SSE stream through without converting it to JSON", async () => {
     upstream.close()
     await once(upstream, "close")
   }
+})
+
+test("preserves fixed artifact response headers and maps upstream failures", async () => {
+  const upstream = createServer((_request, response) => {
+    response.writeHead(200, {
+      "content-type": "application/pdf",
+      "content-length": "7",
+      "content-disposition": "attachment; filename=fixture.pdf",
+    })
+    response.end("fixture")
+  })
+  upstream.listen(0, "127.0.0.1")
+  await once(upstream, "listening")
+  const address = upstream.address()
+  assert.ok(address && typeof address !== "string")
+  const app = buildApp({ ...baseConfig, sessionBaseUrl: `http://127.0.0.1:${address.port}` })
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/artifacts/fixture.pdf",
+      headers: { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-bff-secret" },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["content-type"], "application/pdf")
+    assert.equal(response.headers["content-length"], "7")
+    assert.equal(response.headers["content-disposition"], "attachment; filename=fixture.pdf")
+    assert.equal(response.body, "fixture")
+  } finally {
+    await app.close()
+    upstream.close()
+    await once(upstream, "close")
+  }
+
+  const unavailable = buildApp({ ...baseConfig, sessionBaseUrl: "http://127.0.0.1:1" })
+  const failed = await unavailable.inject({
+    method: "GET",
+    url: "/sessions",
+    headers: { "x-kokoro-service": "web-bff", "x-kokoro-internal-secret": "web-bff-secret" },
+  })
+  assert.equal(failed.statusCode, 502)
+  assert.deepEqual(failed.json(), { error: "session_unreachable" })
+  await unavailable.close()
 })

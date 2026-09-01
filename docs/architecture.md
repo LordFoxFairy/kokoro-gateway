@@ -36,10 +36,14 @@ The compatible upstream covers the existing Web session paths:
 - event SSE with `Last-Event-ID`;
 - run control/HITL;
 - model and agent catalog;
-- artifact and delivery streaming paths under the allowed Session prefixes.
+- artifact and delivery streaming paths under the allowed Session prefixes;
+- billing summary, ledger and model breakdown reads under `/billing/*`, because Web uses the
+  same Session-compatible BFF base URL for them.
 
 The gateway initially forwards these requests without owning Session facts. It must preserve status,
-content type, SSE cache headers, opaque ids, request id and user-visible error semantics. Business
+content type, SSE cache headers, opaque ids, request id, binary response headers (`content-length`
+and `content-disposition`) and user-visible error semantics. Network failure and timeout are mapped
+to the Web-compatible `502 {"error":"session_unreachable"}`. Business
 idempotency, audit and cross-service authorization are later gateway capabilities; they must not be
 implemented twice while Session remains the authority.
 

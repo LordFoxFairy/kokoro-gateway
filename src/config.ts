@@ -37,10 +37,17 @@ function validateBaseUrl(value: string | undefined): string | undefined {
 }
 
 function validateDomain(value: string): string {
-  if (!/^[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/.test(value)) {
-    throw new Error("KOKORO_DOMAIN must be a hostname")
+  const domain = value.trim().toLowerCase().replace(/\.$/u, "")
+  if (domain.length === 0 || domain.length > 253 || /[\s/?#:]/u.test(domain)) {
+    throw new Error("KOKORO_DOMAIN must be a hostname without a port")
   }
-  return value
+  const labels = domain.split(".")
+  if (labels.some((label) =>
+    label.length === 0 || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+  )) {
+    throw new Error("KOKORO_DOMAIN must be a hostname without a port")
+  }
+  return domain
 }
 
 export function configFromEnv(env: NodeJS.ProcessEnv = process.env): GatewayConfig {

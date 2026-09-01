@@ -3,7 +3,10 @@ import { Readable } from "node:stream"
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify"
 import type { GatewayConfig } from "./config.js"
 
-const ROUTE_PREFIXES = ["/sessions", "/models", "/agents", "/artifacts"] as const
+// These prefixes are the complete Session-compatible surface consumed by the
+// Web BFF. Billing intentionally stays here because the current browser
+// client uses the same `/api/session` base URL for its three billing reads.
+const ROUTE_PREFIXES = ["/sessions", "/models", "/agents", "/artifacts", "/billing"] as const
 const ROUTE_METHODS = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"] as const
 const BFF_SERVICE = "web-bff"
 const GATEWAY_SERVICE = "kokoro-gateway"
@@ -35,7 +38,6 @@ const RESPONSE_HOP_BY_HOP_HEADERS = new Set([
   "trailer",
   "transfer-encoding",
   "upgrade",
-  "content-length",
   "content-encoding",
   "set-cookie",
 ])
@@ -90,9 +92,9 @@ export function buildApp(config: GatewayConfig): FastifyInstance {
       // fetch stream accepted by Readable.fromWeb.
       return reply.send(Readable.fromWeb(upstream.body as never))
     } catch (error) {
-      if (controller.signal.aborted) return reply.code(504).send({ error: "upstream_timeout" })
+      if (controller.signal.aborted) return reply.code(502).send({ error: "session_unreachable" })
       request.log.error({ err: error }, "upstream request failed")
-      return reply.code(502).send({ error: "upstream_unavailable" })
+      return reply.code(502).send({ error: "session_unreachable" })
     } finally {
       clearTimeout(timeout)
       request.raw.removeListener("aborted", abortOnClientDisconnect)

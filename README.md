@@ -42,7 +42,11 @@ Browser
 - `GET /healthz`
 - `GET /readyz`
 - `GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS /sessions[/*]`
-- 同样的方法和路径范围：`/models[/*]`、`/agents[/*]`、`/artifacts[/*]`
+- 同样的方法和路径范围：`/models[/*]`、`/agents[/*]`、`/artifacts[/*]`、`/billing[/*]`
+
+`/billing/summary`、`/billing/ledger` 与 `/billing/by-model` 目前也由 Web 的
+`/api/session` client 发起，因此必须和 Chat 一起经过兼容网关；它们仍由 Session/Hub
+提供事实，Gateway 不在此阶段实现计费规则。
 
 `/readyz` 只在 `KOKORO_SESSION_BASE_URL` 已配置时返回 ready；它不会把未配置 upstream
 伪装成 live。真正的上游可用性由后续部署探针和集成 smoke 验证。
@@ -81,5 +85,8 @@ localStorage、URL 或公开 UI。网关不会信任浏览器发送的 `X-Domain
 - 生产部署前必须配置 `KOKORO_SESSION_INTERNAL_SECRET`，并通过网络 ACL 只允许可信 Web BFF 调用。
 - 不把真实 secret 提交到 `.env`、GitHub Actions 日志、Docker image 或任何 shared package。
 
-Root-owned API/AIP contract 仍以父仓 `contract/` 为准；本仓不复制或修改 Root Proto/OpenAPI。
+Gateway 在兼容阶段保持 Web 可见错误语义：上游连接失败或超时返回
+`502 {"error":"session_unreachable"}`；上游自身的 HTTP 状态、JSON、SSE、二进制 body、
+`content-length` 与 `content-disposition` 按原响应转发。Root-owned API/AIP contract 仍以父仓
+`contract/` 为准；本仓不复制或修改 Root Proto/OpenAPI。
 跨仓边界与迁移顺序见 `docs/architecture.md`。
