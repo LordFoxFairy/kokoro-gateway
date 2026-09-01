@@ -56,6 +56,7 @@ Web 侧生产/集成环境优先只配置一个 server-only 地址：
 KOKORO_DOMAIN="app.example.com"
 KOKORO_GATEWAY_BASE_URL="http://kokoro-gateway:8080"
 KOKORO_INTERNAL_SECRET_WEB_BFF="<web-to-gateway-secret>"
+KOKORO_WEB_SESSION_SECRET="<web-session-envelope-secret>"
 ```
 
 本地对应为：
@@ -85,6 +86,9 @@ KOKORO_SYSTEM_BASE_URL="http://kokoro-system:4240"
 KOKORO_AGENT_BASE_URL="http://kokoro-agent:4260"
 KOKORO_PAYMENT_BASE_URL="http://kokoro-payment:4241"
 KOKORO_BILLING_BASE_URL="http://kokoro-billing:4245"
+KOKORO_SESSION_SERVICE_VALUE="kokoro-gateway"
+KOKORO_UPSTREAM_TIMEOUT_MS="30000"
+KOKORO_GATEWAY_BODY_LIMIT_BYTES="10485760"
 ```
 
 Web 与 Gateway 的 `KOKORO_DOMAIN` 必须是同一个不带端口的规范 hostname。域名只由 env
@@ -94,6 +98,13 @@ Gateway 根据服务端配置重新生成：
 ```http
 Forwarded: host=<KOKORO_DOMAIN>
 ```
+
+`KOKORO_WEB_SESSION_SECRET` 属于 Web BFF 的服务端配置，不会传给 Gateway，也不会进入
+浏览器；它用于签发/校验 Web 的 HttpOnly session envelope。只有本地 preview 才可以省略。
+
+`KOKORO_SESSION_SERVICE_VALUE` 可按部署环境覆盖 Gateway → Session 的服务身份值；后两个
+变量分别限定上游请求超时和入站 body 大小。它们只属于 Gateway 运行时，不是 Web 浏览器
+环境变量。
 
 ## 6. API 契约来源与验收顺序
 

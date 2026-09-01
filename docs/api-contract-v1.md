@@ -34,9 +34,13 @@ x-kokoro-internal-secret: <KOKORO_GATEWAY_SHARED_SECRET>
 浏览器 bearer 不能替代这组服务凭据。Gateway 对每个上游请求重新生成：
 
 ```http
-x-kokoro-service: kokoro-gateway
+x-kokoro-service: <KOKORO_SESSION_SERVICE_VALUE>
 Forwarded: host=<KOKORO_DOMAIN>
 ```
+
+`KOKORO_SESSION_SERVICE_VALUE` 默认为 `kokoro-gateway`，但它是可配置的服务身份值；文档中的
+尖括号表示 Gateway 当前运行时配置，而不是浏览器可提交的值。Gateway 到 Session 的
+`KOKORO_SESSION_INTERNAL_SECRET` 与 Web BFF 到 Gateway 的共享密钥始终是两组独立凭据。
 
 `Authorization`、`Last-Event-ID`、`x-kokoro-request-id` 和 Web BFF 派生的 principal 头按
 **路由所属 bounded context 的 allowlist** 转发：Hub 允许 `x-kokoro-namespace` 与
@@ -131,6 +135,7 @@ Node fetch transparently decoding a compressed upstream body while leaving its c
 NEXT_PUBLIC_SESSION_PREVIEW=0
 KOKORO_GATEWAY_BASE_URL=http://kokoro-gateway:8080
 KOKORO_INTERNAL_SECRET_WEB_BFF=<shared-with-gateway>
+KOKORO_WEB_SESSION_SECRET=<web-session-envelope-secret>
 ```
 
 配置统一 Gateway 基址后，Web BFF 会按路由自动使用 `/sessions`、`/hub`、`/system`、
@@ -151,6 +156,17 @@ KOKORO_BILLING_BASE_URL=http://kokoro-gateway:8080/billing-service
 
 Gateway 进程里的同名变量填写真实后端地址，并可为每个 upstream 设置独立的
 `KOKORO_*_INTERNAL_SECRET`。变量绝不使用 `NEXT_PUBLIC_*`，也不写入 shared package。
+
+Gateway 运行时还可通过以下变量调整 transport 行为；默认值来自 `.env.example`：
+
+```dotenv
+KOKORO_SESSION_SERVICE_VALUE=kokoro-gateway
+KOKORO_UPSTREAM_TIMEOUT_MS=30000
+KOKORO_GATEWAY_BODY_LIMIT_BYTES=10485760
+```
+
+`KOKORO_SESSION_SERVICE_VALUE` 只用于 Gateway → Session 的服务身份头；timeout 和 body limit
+只影响 Gateway 自身的请求边界，不改变浏览器 API 或领域业务 DTO。
 
 ## 5. Chat 迁移验收
 

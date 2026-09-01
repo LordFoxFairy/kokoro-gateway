@@ -23,6 +23,9 @@ KOKORO_DOMAIN=app.example.com
 KOKORO_GATEWAY_SHARED_SECRET=SECRET_SHARED_WITH_WEB_BFF
 KOKORO_SESSION_BASE_URL=http://kokoro-session:3900
 KOKORO_SESSION_INTERNAL_SECRET=SECRET_SHARED_WITH_SESSION
+KOKORO_SESSION_SERVICE_VALUE=kokoro-gateway
+KOKORO_UPSTREAM_TIMEOUT_MS=30000
+KOKORO_GATEWAY_BODY_LIMIT_BYTES=10485760
 ```
 
 Optional business upstreams (enable only the services deployed in this environment):
@@ -49,11 +52,12 @@ them in the deployment secret store, not in the image or repository. `/healthz` 
 
 ## Web BFF binding
 
-In the independently deployed `kokoro-app`, set only the server-side upstream:
+In the independently deployed `kokoro-app`, set the server-side Gateway binding:
 
 ```dotenv
-KOKORO_SESSION_BASE_URL=http://kokoro-gateway:8080
+KOKORO_GATEWAY_BASE_URL=http://kokoro-gateway:8080
 KOKORO_INTERNAL_SECRET_WEB_BFF=SECRET_SHARED_WITH_WEB_BFF
+KOKORO_WEB_SESSION_SECRET=SECRET_FOR_WEB_SESSION_ENVELOPE
 ```
 
 The browser still calls `kokoro-app` `/api/session/*`. No gateway URL or service credential is
@@ -62,6 +66,9 @@ added to React code. The Web BFF sends `x-kokoro-service: web-bff` and
 separate Session credential upstream.
 
 Chat uses this exact path without a new `/chat` surface: `/api/session/*` → `/sessions/*` → Session.
+For a staged migration, `KOKORO_SESSION_BASE_URL=http://kokoro-gateway:8080` remains a supported
+legacy override, but a new deployment should use `KOKORO_GATEWAY_BASE_URL` so every Web BFF
+namespace shares one explicit Gateway entry point.
 To route the other Web BFF surfaces through the same gateway, point the Web server-only variables
 to the gateway root, except for the explicit collision-free payment prefixes:
 

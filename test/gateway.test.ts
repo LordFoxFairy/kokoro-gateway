@@ -42,6 +42,21 @@ test("normalizes the deployment domain using the Web BFF hostname contract", () 
   }), /hostname without a port/)
 })
 
+test("loads gateway transport knobs from env without falling back to browser headers", () => {
+  const config = configFromEnv({
+    NODE_ENV: "test",
+    KOKORO_DOMAIN: "dev.kokoro.localhost",
+    KOKORO_GATEWAY_SHARED_SECRET: "web-bff-secret",
+    KOKORO_SESSION_SERVICE_VALUE: "session-proxy-fixture",
+    KOKORO_UPSTREAM_TIMEOUT_MS: "7500",
+    KOKORO_GATEWAY_BODY_LIMIT_BYTES: "2048",
+  })
+
+  assert.equal(config.sessionServiceValue, "session-proxy-fixture")
+  assert.equal(config.upstreamTimeoutMs, 7500)
+  assert.equal(config.bodyLimitBytes, 2048)
+})
+
 test("health and readiness distinguish liveness from configured upstream", async () => {
   const notReady = buildApp(baseConfig)
   assert.equal((await notReady.inject("/healthz")).statusCode, 200)
